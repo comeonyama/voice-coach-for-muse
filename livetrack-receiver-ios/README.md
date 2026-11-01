@@ -1,0 +1,155 @@
+# Muse LiveTrack Receiver — iOSネイティブ版
+
+Swift / SwiftUI、iOS 17以降、外部依存なしの検証用アプリです。Bundle IDは `jp.discoverroutes.livetrackreceiver`。Web版と同じqueue.jsonとMP3を読み取ります。サーバーへのACK・削除・書き込みはありません。
+
+**実装・ビルド検証済み。2026-11-01のユーザーによる実機テストで、Spotifyの音量低下を確認しました。終了後の音量復帰とバックグラウンド受信は未確認です。** 初回作成時は実機未接続でしたが、その後Personal Teamで署名したアプリのインストールに成功し、開発者の信頼設定後にテストを実施しました。
+
+## 最短の実機セットアップ
+
+1. MacでXcodeを起動し、`Xcode > Settings > Accounts`（版によってApple Accounts）からApple IDを追加します。アカウント認証や利用規約の同意は本人が行ってください。
+2. `LiveTrackReceiver.xcodeproj` を開きます。Package追加、npm、CocoaPodsは不要です。
+3. 左のプロジェクトから `TARGETS > LiveTrackReceiver > Signing & Capabilities` を開きます。
+4. `Automatically manage signing` をONにして、Teamに自分の **Personal Team** を指定します。Team IDや証明書は納品物に含めていません。
+5. Bundle Identifierが取得できない場合は、自分用の一意な値（例：`jp.discoverroutes.livetrackreceiver.yourname`）へ変更します。
+6. iPhoneをUSBで接続し、ロック解除します。「このコンピュータを信頼」が出たら本人が確認します。
+7. Xcodeの実行先で実機を選びます。必要なOSサポートのダウンロードがある場合は完了させます。
+8. iPhoneの `設定 > プライバシーとセキュリティ > デベロッパモード` をONにし、案内に沿って再起動・確認します。項目がない場合は先にXcodeとのペアリングを完了してください。
+9. スキーム `LiveTrackReceiver` を選び、Run（⌘R）でビルド・インストールします。
+10. 「信頼されていないデベロッパ」等が表示された場合のみ、iPhoneの `設定 > 一般 > VPNとデバイス管理` から自分の開発用Apple IDを信頼します。OSの案内に従ってください。
+11. iPhoneにBluetoothイヤホンを接続してSpotifyを再生し、このアプリへ戻って **テスト再生** を押します。初回のダッキング確認は「コーチング開始」も位置情報の許可も不要です。
+
+無料Personal Teamのプロビジョニングは発行から7日で失効します。失効したら同じMac・Apple IDで再ビルド／再インストールしてください。アプリを削除するとUserDefaultsの設定・再生済み記録も消えます。
+
+### Capabilities制限に当たった場合
+
+`LiveTrackReceiver-Foreground` スキームを選んでRunしてください。これは `DebugForeground` / `ReleaseForeground` 構成を使い、`UIBackgroundModes`と位置情報利用目的キーを含まない別のInfo.plistでビルドし、位置情報更新も無効化します。前景の受信・ダッキング・履歴機能は維持します。
+
+署名画面でBackground Modes自体が拒否される場合は、前景構成を選んだうえでCapabilities欄のBackground Modesを削除し、再ビルドしてください。位置情報用途を説明するための無音ループなどは実装していません。
+
+**Personal TeamでAudio／Locationが拒否されることを確認したわけではありません。** 署名済み実機ビルドを行えていないため、制限の有無は未検証です。エラーが出た場合はXcodeの全文を検証記録へ残してください。
+
+## 操作
+
+- **開始**：設定URLを即時取得し、その取得完了から設定間隔（初期5秒）ごとに取得します。
+- **停止**：ポーリング・取得・再生・待機を停止し、Audio Sessionと位置情報更新、自動ロック抑止を解放します。再生途中のIDは再生済みにしません。
+- **テスト再生**：同梱の約14.6秒の日本語MP3を同じダッキング経路で再生します。ネット接続不要。キュー再生とは重なりません。
+- **再生済みをリセット**：全配信元・全セッションの成功IDを削除します。再生／待機中は無効。受信中なら次のポーリングで再検出します。
+- **ログをコピー**：最大2,000行をクリップボードへコピー。ログ時刻はUTC、画面の履歴時刻は端末の現地時刻です。
+- **設定**：URL・間隔・自動ロック抑止・位置情報更新をUserDefaultsへ自動保存します。URLと間隔は開始中／再生中に変更できません。
+- **音声を再開**：OSが自動再開を許可しなかった場合やイヤホン切断後に表示します。
+
+初期URLは公開デモの `demo-queue.json` です。初回開始で3件のトーンを再生します。日本語テスト音声は **テスト再生** ボタンで再生します。本番URLへ設定し直すまではMuseの実配信には接続しません。
+
+## Museとのデータ契約
+
+```json
+{
+  "session": "2026-11-01-longrun",
+  "messages": [
+    {
+      "id": "m-0001",
+      "ts": "2026-11-01T10:15:30+09:00",
+      "audio": "audio/m-0001.mp3",
+      "text": "5キロです。平均ペースは5分40秒。予定通りです。"
+    }
+  ]
+}
+```
+
+- Museが更新できるHTTP(S)配信先を別途用意し、音声を先に配置してからJSONを追記／置き換えてください。
+- audioの相対パスはqueue.jsonのURL基準です。tsはタイムゾーン付きISO 8601（小数秒も対応）。各取得内でts順にソートします。
+- 同じ配信元URL・session・idを成功再生した場合は二重再生しません。sessionが変われば同じidも新規扱いです。URLのクエリを変えた場合も別の配信元になります。
+- 初回はJSON内の未再生メッセージ全部を処理します。古い文を流したくない場合はMuse側で除外します。
+- 音声が失敗しても文面は表示し、履歴にスキップと記録します。同じ開始期間中は失敗IDを繰り返さず、停止→開始またはアプリ再起動で再試行できます。
+- 不正なJSON全体は当該取得を失敗として次回へ継続。idが空／tsが不正の要素はログに残し除外します。
+- HTTPSを推奨。HTTP入力は受け付けますが、ATSにより拒否される配信先があります。全通信を許可するATS例外は入れていません。
+- ネイティブのURLSessionにはWebブラウザのCORS制限はありません。配信先の認証が必要な場合、その認証処理はv1にありません。
+
+## 音声セッションの実装
+
+1. テキストを表示してMP3を取得します。ネットワーク待ちだけでSpotifyを小さくしないよう、有効化は音声の取得・デコード準備の後です。
+2. `setCategory(.playback, mode: .spokenAudio, options: [.duckOthers])` を設定し、`setActive(true)` を呼びます。
+3. AVAudioPlayerで1件ずつ再生します。キューが続く間は約0.3秒間隔。Audio Sessionは同じバッチの間保持し、次のMP3取得待ちにも有効である場合があります。
+4. 全件終了、停止、再生エラー時に `setActive(false, options: [.notifyOthersOnDeactivation])` で解放します。
+
+セッション有効化／解放のAPI成功はログに記録しますが、Spotifyの実際の音量変化は検出できません。出力ポートや音量は強制変更せず、現在のBluetooth等の経路に従います。
+
+電話等の割り込み開始時はキューを一時停止し、OSがセッションを無効化した状態を反映します。終了通知の `.shouldResume` があれば再有効化して続きから再生します。OSが再開を許可しない場合は、強制再生せず「音声を再開」で続行できます。経過秒数には割り込み待機時間を含みます。
+
+イヤホン切断時も一時停止して手動再開を要求します。音声サービスのリセットでは受信を停止して再開始を案内します。途中停止した音声は成功IDとして保存しません。
+
+## バックグラウンドの範囲と限界
+
+通常スキームでは `UIBackgroundModes = [audio, location]` を指定します。開始中かつ位置情報更新トグルONのときだけ、CoreLocationの標準位置更新と `allowsBackgroundLocationUpdates` を有効化します。位置更新の内容は即座に破棄し、保存・ログ出力・サーバー送信はしません。位置情報の許可ダイアログにはこの用途を日本語で明示します。
+
+初回は「アプリの使用中」の許可を要求します。「常に許可」は設定画面の専用ボタンで段階的に要求できます。OSによっては後から設定アプリで変更する必要があります。開始済みの標準位置更新は使用中許可でもバックグラウンド利用できる場合がありますが、許可や表示状態によって挙動が変わります。
+
+- Audioモードだけでは、音声を再生していない長い待機時間のポーリングを保証できません。
+- 位置更新が有効でも、5秒ちょうどのポーリングは保証できません。省電力・通信・権限・OSのプロセス制御に依存します。
+- 位置情報拒否、前景専用構成、強制終了などではロック中の新着受信を保証しません。強制終了後に自動起動する仕組みはありません。
+- `isIdleTimerDisabled` は開始中のみ設定します。手動ロックを阻止するものではありません。
+- 今回は検証用の実装です。将来のApp Store配布では、位置情報を使う背景動作がアプリの実機能に必要であるかを改めて判断する必要があり、審査通過を保証しません。
+
+## 検証記録（2026-11-01）
+
+| 項目 | 結果 |
+| --- | --- |
+| 通常構成のiPhone向け署名なしビルド | 成功：Xcode 27.2 / iOS SDK 27.2 / arm64 / 最低iOS 17 |
+| 前景専用構成のiPhone向け署名なしビルド | 成功 |
+| JSON・日時・相対URL・重複防止・永続データ復元のテスト | 成功：Tests/QueueModelTests.swift |
+| 日本語テストMP3 | 約14.6秒、MP3デコード成功 |
+| シミュレータ向けビルド・インストール・起動 | 成功：iOS 18.5 / iPhone 16 Pro / 前景専用構成。UI操作・音声再生の実行確認は未実施 |
+| 接続実機の検出 | `No devices found` |
+| 1. 実機前景：Spotifyの低下・音声明瞭度・終了後の復帰 | **未確認（接続実機なし）** |
+| 2. 実機：追記検出・順次再生・再起動後の二重再生防止 | **未確認**。重複防止と永続データ復元のコアロジックのみテスト済み |
+| 3. 実機ロック画面／他アプリ表示中の新着受信 | **未確認**。バックグラウンド機能を実装済みだが実証していない |
+| 4. Personal TeamのCapabilities制限 | **未確認**。署名済み実機ビルド未実施。制限を推測で断定しない |
+
+### 実機で記録する項目
+
+- iPhone：iPhone 17 Pro Max / iOSバージョン：未記録
+- Spotifyバージョン：未記録 / イヤホン：未記録 / 低電力モード：未記録
+- [ ] Spotify再生→テスト再生：音楽が小さくなり、日本語音声が聞き取れる
+- [ ] 音声終了で音楽が元の音量に戻り、停止したままにならない
+- [ ] 同じテストを3回繰り返して復帰を確認
+- [ ] queue.json追記で次の取得時に検出し、複数件を順次再生
+- [ ] アプリ再起動で成功再生済みのidを再生しない
+- [ ] 不正MP3の後に正常MP3を追加し、エラー後も次へ進む
+- [ ] テスト再生の途中で停止し、直ちに音楽の音量が戻る
+- [ ] 電話等の割り込み後の再開・OSが再開を許可しない場合のボタンを確認
+- [ ] イヤホン切断で一時停止し、再接続後に再開できる
+- [ ] Xcodeのデバッガから切り離し、ホーム画面から起動してロック中の新着を確認
+- [ ] 位置情報ON/OFF、使用中／常に許可、低電力モードの各条件を記録
+- [ ] 制限があれば、停止した時刻・最後のポーリング・権限状態・Xcodeエラーを保存
+
+デバッガ接続中のバックグラウンド動作は実運用と異なる場合があります。バックグラウンドの判定はデバッガから切り離した状態で行ってください。
+
+## コマンドでの検証
+
+プロジェクトフォルダで以下を実行します。Xcodeが別の場所ならDEVELOPER_DIRを変更してください。
+
+```sh
+DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer xcodebuild \
+  -project LiveTrackReceiver.xcodeproj -scheme LiveTrackReceiver \
+  -destination 'generic/platform=iOS' -derivedDataPath /tmp/livetrack-build \
+  CODE_SIGNING_ALLOWED=NO build
+
+DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer xcrun swiftc \
+  LiveTrackReceiver/QueueModels.swift Tests/QueueModelTests.swift \
+  -o /tmp/livetrack-model-tests
+/tmp/livetrack-model-tests
+```
+
+署名なしの.appはiPhoneへ直接インストールできません。実機には前述のPersonal Team署名が必要です。
+
+## 参考（Apple公式）
+
+- [duckOthers](https://developer.apple.com/documentation/avfaudio/avaudiosession/categoryoptions-swift.struct/duckothers)
+- [Audio Sessionの有効化・解放に関するQA1631](https://developer.apple.com/library/archive/qa/qa1631/_index.html)
+- [バックグラウンド位置情報更新](https://developer.apple.com/documentation/corelocation/handling-location-updates-in-the-background)
+- [デベロッパモード](https://developer.apple.com/documentation/xcode/enabling-developer-mode-on-a-device)
+- [Personal Teamと7日のプロビジョニング期限](https://developer.apple.com/help/account/basics/about-your-developer-account)
+
+## 実機検証の追記（2026-11-01）
+
+上の検証表は初回作成時点の記録です。その後、iPhone 17 Pro Maxへ署名済みアプリのインストールが成功しました。Xcodeのロック解除警告が続いたためdevicectlでインストールし、端末の開発者信頼設定後に起動しました。ユーザーから「テスト成功、音楽の音量が下がった」と報告があり、前景ダッキングの音量低下は確認済みです。終了後の音量復帰・実キュー追記・ロック中の動作は未確認です。署名・インストール時にBackground Modes由来の制限は確認されませんでしたが、バックグラウンド動作の実証とは区別します。
