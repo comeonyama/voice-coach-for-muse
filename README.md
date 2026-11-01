@@ -1,11 +1,10 @@
 # Voice Coach for Muse
 
-Museが生成したコーチングのJSONとMP3を受信・再生するiOSアプリと静的Webアプリです。
+Museが生成したコーチングのJSONとMP3を受信・再生するiOSアプリです。
 
 ## プロジェクト
 
 - [iOS版](livetrack-receiver-ios/README.md)：SwiftUI / iOS 17以降 / AVAudioSessionのduckOthersで音楽との共存を検証。
-- [Web版](livetrack-receiver/README.md)：Vanilla HTML・CSS・JavaScript。ビルド不要。
 
 iOS版は `livetrack-receiver-ios/Voice Coach for Muse.xcodeproj` をXcodeで開きます。実機利用時には自分のPersonal Teamを選んで署名してください。個人のTeam ID・証明書・プロビジョニングプロファイルは含めていません。
 
@@ -19,7 +18,7 @@ iOS版は `livetrack-receiver-ios/Voice Coach for Muse.xcodeproj` をXcodeで開
 - 本番経路でのコーチング文の配信テスト
 - 夕方の屋外実走テスト（8.11km）で、LiveTrack 開始検知から監視・音声コーチング配信（51件）までの本番フローを確認
 
-Web版は同時再生には成功しましたが、音量低下が実現せず、割り込みモードではSpotifyが停止して自動復帰しませんでした。そのため Web 版は先行検証用と位置づけ、本番は iOS 版を使います。
+Web 版も試作しましたが、Spotify のダッキングが実現できず、割り込みモードでは Spotify が停止して自動復帰しないため、採用せず削除しました。
 
 ## データ配信
 
@@ -43,7 +42,6 @@ flowchart LR
 | ディレクトリ | 役割 |
 |---|---|
 | `livetrack-receiver-ios/` | iOS アプリ。既存の配置・機能・バンドル ID を維持 |
-| `livetrack-receiver/` | 先行検証用の静的 Web 版 |
 | `server/` | 本番と同一の upload.php のコピーと設置手順 |
 | `publisher/` | Muse 原本の publish.py。init / say / sync / cleanup |
 
