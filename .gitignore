@@ -23,3 +23,4 @@ build/
 /publisher/connector.yaml
 /publisher/config.*
 __pycache__/
+/publisher/queue/

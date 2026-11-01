@@ -39,8 +39,8 @@ flowchart LR
 | `livetrack-receiver-ios/` | iOS アプリ。既存の配置・機能・バンドル ID を維持 |
 | `livetrack-receiver/` | 先行検証用の静的 Web 版 |
 | `server/` | 本番と同一の upload.php のコピーと設置手順 |
-| `publisher/` | 発行側の格納先。Muse の publish.py 原本は受領待ち |
+| `publisher/` | Muse 原本の publish.py。init / say / sync / cleanup |
 
-[サーバー設置・API](server/README.md)と[発行側の収録状況](publisher/README.md)を参照してください。現時点では監視・TTS・発行スクリプトの実物をすべて収録した状態ではありません。
+[サーバー設置・API](server/README.md)と[発行側の設定・使い方](publisher/README.md)を参照してください。発行スクリプトは収録済みです。監視・文章生成および TTS エンジン自体は外部の仕組みを利用します。
 
 リポジトリは private のまま運用します。新たなトークン・API キー、実運用 queue、セッション状態、生成音声、テストログ、Muse 固有のコネクタ設定は格納しません。既存アプリに同梱されている音声テスト・デモ用 MP3 は動作を維持するため、そのまま残しています。
