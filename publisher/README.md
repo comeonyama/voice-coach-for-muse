@@ -8,7 +8,7 @@
 - `say` 用の TTS コマンド。既定は Muse の `tts` CLI
 - 複数文の `say` には `ffmpeg`（libmp3lame 対応）
 
-TTS は次の CLI と互換である必要があります。一般の TTS サービスを使う場合は同じ引数を受け取るラッパーを用意するか、`tts_speak()` を環境に合わせます。TTS 自体と監視・文章生成の仕組みはこのリポジトリには含みません。
+TTS は次の CLI と互換である必要があります。一般の TTS サービスを使う場合は同じ引数を受け取るラッパーを用意するか、`tts_speak()` を環境に合わせます。TTS 自体と定期実行・文章生成の仕組みは外部で用意します。LiveTrack ポーラーは [monitor/](../monitor/README.md) に収録しています。
 
 ```text
 <bin> speak --text <text> --voice <voice> --language ja --output <path>
@@ -20,7 +20,7 @@ TTS は次の CLI と互換である必要があります。一般の TTS サー
 
 | 変数 | 内容・既定値 |
 |---|---|
-| `LIVETRACK_UPLOAD_ENDPOINT` | HTTPS の upload.php URL。既定は `https://discoverroutes.jp/livetrack/upload.php` |
+| `LIVETRACK_UPLOAD_ENDPOINT` | HTTPS の upload.php URL。自分の `https://<your-domain>/livetrack/upload.php` を明示設定（原本の既定は著者環境） |
 | `LIVETRACK_UPLOAD_TOKEN` | 認証トークン。必須（ローカルだけの init は不要） |
 | `LIVETRACK_QUEUE_DIR` | ローカル状態の保存先。既定はスクリプト隣の `queue/`。絶対パスを推奨 |
 | `LIVETRACK_TTS_BIN` | TTS 実行ファイル。既定 `tts` |
@@ -32,7 +32,7 @@ TTS は次の CLI と互換である必要があります。一般の TTS サー
 export LIVETRACK_UPLOAD_TOKEN="$(python3 -c 'import getpass; print(getpass.getpass("Upload token: "))')"
 export LIVETRACK_QUEUE_DIR="$PWD/publisher/queue"
 # 必要なら接続先と TTS を設定（HTTPS の信頼する接続先のみ）
-export LIVETRACK_UPLOAD_ENDPOINT='https://discoverroutes.jp/livetrack/upload.php'
+export LIVETRACK_UPLOAD_ENDPOINT='https://<your-domain>/livetrack/upload.php'
 ```
 
 ## 操作

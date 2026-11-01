@@ -24,3 +24,8 @@ build/
 /publisher/config.*
 __pycache__/
 /publisher/queue/
+
+# LiveTrack monitoring state (never commit session data)
+/monitor/state/
+/monitor/*.json
+/monitor/*.log

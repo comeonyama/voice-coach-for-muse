@@ -2,6 +2,8 @@
 
 Museが生成したコーチングのJSONとMP3を受信・再生するiOSアプリです。
 
+セットアップは [SETUP.md](SETUP.md) を参照してください。
+
 ## プロジェクト
 
 - [iOS版](livetrack-receiver-ios/README.md)：SwiftUI / iOS 17以降 / AVAudioSessionのduckOthersで音楽との共存を検証。
@@ -43,9 +45,10 @@ flowchart LR
 |---|---|
 | `livetrack-receiver-ios/` | iOS アプリ。既存の配置・機能・バンドル ID を維持 |
 | `server/` | 本番と同一の upload.php のコピーと設置手順 |
+| `monitor/` | LiveTrack ポーリング。Muse が実行 |
 | `publisher/` | Muse 原本の publish.py。init / say / sync / cleanup |
 
-[サーバー設置・API](server/README.md)と[発行側の設定・使い方](publisher/README.md)を参照してください。発行スクリプトは収録済みです。監視・文章生成および TTS エンジン自体は外部の仕組みを利用します。
+[サーバー設置・API](server/README.md)と[発行側の設定・使い方](publisher/README.md)を参照してください。発行スクリプトは収録済みです。LiveTrack ポーラーも収録済みです。定期実行・文章生成および TTS エンジン自体は外部の仕組みを利用します。
 
 ## Muse へのコーチング指示
 
