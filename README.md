@@ -1,6 +1,6 @@
 # Voice Coach for Muse
 
-Museが生成したコーチングのJSONとMP3を受信・再生するiOSアプリです。
+Museが生成したコーチング音声（MP3）とJSONを受信・再生するiOSアプリです。
 
 セットアップは [SETUP.md](SETUP.md) を参照してください。
 
