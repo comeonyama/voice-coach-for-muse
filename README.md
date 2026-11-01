@@ -20,3 +20,27 @@ Web版は同時再生には成功しましたが、音量低下が実現せず�
 Museが更新する `queue.json` とMP3をHTTP(S)で配信し、アプリにURLを設定します。相対音声パスはqueue.jsonを基準に解決します。受信専用で、サーバーへのACKや削除はありません。
 
 詳細なJSON形式、ビルド・インストール方法、検証手順は各READMEを参照してください。
+
+## システム全体
+
+```mermaid
+flowchart LR
+    A[Garmin LiveTrack] --> B[Muse: 監視・コーチング文章生成]
+    B --> C[TTS: MP3生成]
+    C --> D[発行側スクリプト]
+    D -->|HTTPS・トークン認証| E[upload.php]
+    E --> F[queue.json と audio/*.mp3]
+    F -->|定期取得・読み取り専用| G[Voice Coach for Muse]
+    G --> H[Spotifyをダッキングして再生]
+```
+
+| ディレクトリ | 役割 |
+|---|---|
+| `livetrack-receiver-ios/` | iOS アプリ。既存の配置・機能・バンドル ID を維持 |
+| `livetrack-receiver/` | 先行検証用の静的 Web 版 |
+| `server/` | 本番と同一の upload.php のコピーと設置手順 |
+| `publisher/` | 発行側の格納先。Muse の publish.py 原本は受領待ち |
+
+[サーバー設置・API](server/README.md)と[発行側の収録状況](publisher/README.md)を参照してください。現時点では監視・TTS・発行スクリプトの実物をすべて収録した状態ではありません。
+
+リポジトリは private のまま運用します。新たなトークン・API キー、実運用 queue、セッション状態、生成音声、テストログ、Muse 固有のコネクタ設定は格納しません。既存アプリに同梱されている音声テスト・デモ用 MP3 は動作を維持するため、そのまま残しています。

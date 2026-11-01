@@ -10,3 +10,16 @@ build/
 *.p8
 .env
 .env.*
+
+# Server/publisher runtime data and credentials
+/server/audio/
+/server/queue.json
+/server/*.log
+/publisher/state/
+/publisher/audio/
+/publisher/*.json
+/publisher/*.mp3
+/publisher/*.log
+/publisher/connector.yaml
+/publisher/config.*
+__pycache__/
