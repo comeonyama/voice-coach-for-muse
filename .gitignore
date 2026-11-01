@@ -29,3 +29,5 @@ __pycache__/
 /monitor/state/
 /monitor/*.json
 /monitor/*.log
+!/monitor/*.sample.json
+/state/

@@ -45,10 +45,10 @@ flowchart LR
 |---|---|
 | `livetrack-receiver-ios/` | iOS アプリ。既存の配置・機能・バンドル ID を維持 |
 | `server/` | 本番と同一の upload.php のコピーと設置手順 |
-| `monitor/` | LiveTrack ポーリング。Muse が実行 |
+| `monitor/` | LiveTrack ポーリングと監視ループ。Muse が設定・ネタ帳を供給して実行 |
 | `publisher/` | Muse 原本の publish.py。init / say / sync / cleanup |
 
-[サーバー設置・API](server/README.md)と[発行側の設定・使い方](publisher/README.md)を参照してください。発行スクリプトは収録済みです。LiveTrack ポーラーも収録済みです。定期実行・文章生成および TTS エンジン自体は外部の仕組みを利用します。
+[サーバー設置・API](server/README.md)と[発行側の設定・使い方](publisher/README.md)を参照してください。発行スクリプトは収録済みです。LiveTrack ポーラーと監視ループも収録済みです。Muse が設定・ネタ帳を供給し、プログラムが配信の骨格を担います。メール検知・プロセス起動と TTS エンジンは外部で用意します。
 
 ## Muse へのコーチング指示
 
