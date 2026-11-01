@@ -85,7 +85,7 @@ final class ReceiverModel: NSObject, ObservableObject {
     func start() {
         guard !running, !busy else { return }
         guard let source = QueueURL.source(queueURL) else {
-            notice = "有効なqueue.jsonのHTTP(S) URLを指定してください。HTTPSを推奨します。"; return
+            notice = "設定で有効な配信URLを指定してください。https:// で始まるURLを推奨します。"; return
         }
         running = true; paused = false; resumeAllowed = true
         lastPoll = nil
@@ -119,12 +119,12 @@ final class ReceiverModel: NSObject, ObservableObject {
 
     func testPlay() {
         guard !busy, pending.isEmpty, !interruptionActive else {
-            notice = "待機・再生・割り込みが終わってからテストしてください。"; return
+            notice = "音声の再生や一時停止が終わってからお試しください。"; return
         }
         guard let url = Bundle.main.url(forResource: "test-coaching", withExtension: "mp3") ?? Bundle.main.url(forResource: "test-tone", withExtension: "mp3") else {
             log("再生エラー", "同梱MP3がありません"); return
         }
-        let message = CoachingMessage(id: "test", ts: ISO8601DateFormatter().string(from: Date()), audio: "", text: "テスト音声です。音楽が小さくなり、終了後に元の音量に戻るか確認してください。")
+        let message = CoachingMessage(id: "test", ts: ISO8601DateFormatter().string(from: Date()), audio: "", text: "音声を確認しています。音楽の音量が下がり、終了後に元に戻るか確認してください。")
         pending.append(PlaybackItem(message: message, key: nil, url: url))
         drain()
     }
@@ -132,7 +132,7 @@ final class ReceiverModel: NSObject, ObservableObject {
     func resetPlayed() {
         guard !busy, pending.isEmpty else { notice = "再生を停止してからリセットしてください。"; return }
         ledger.resetAll(); defaults.removeObject(forKey: "played.v1"); history.removeAll()
-        notice = "全配信元・全セッションの再生済み記録を消去しました。"
+        notice = "すべてのランの再生済み記録を消去しました。"
         log("再生済みリセット")
     }
 
