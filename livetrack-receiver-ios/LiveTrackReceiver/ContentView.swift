@@ -35,9 +35,15 @@ struct ContentView: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 24) {
-                    Text("LiveTrack\nReceiver")
-                        .font(.system(size: 32, weight: .bold, design: .rounded))
-                        .accessibilityLabel("LiveTrack Receiver")
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Voice Coach")
+                            .font(.system(size: 32, weight: .bold, design: .rounded))
+                        Text("for Muse")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(accent)
+                    }
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel("Voice Coach for Muse")
                     HStack(spacing: 8) {
                         Circle().fill(model.running || model.busy ? accent : .gray).frame(width: 8, height: 8)
                         Text(activity).font(.subheadline.weight(.semibold)).foregroundStyle(accent)

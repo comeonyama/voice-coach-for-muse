@@ -1,4 +1,4 @@
-# Muse LiveTrack Receiver
+# Voice Coach for Muse
 
 Museが生成したコーチングのJSONとMP3を受信・再生するiOSアプリと静的Webアプリです。
 
@@ -7,7 +7,7 @@ Museが生成したコーチングのJSONとMP3を受信・再生するiOSアプ
 - [iOS版](livetrack-receiver-ios/README.md)：SwiftUI / iOS 17以降 / AVAudioSessionのduckOthersで音楽との共存を検証。
 - [Web版](livetrack-receiver/README.md)：Vanilla HTML・CSS・JavaScript。ビルド不要。
 
-iOS版は `livetrack-receiver-ios/LiveTrackReceiver.xcodeproj` をXcodeで開きます。実機利用時には自分のPersonal Teamを選んで署名してください。個人のTeam ID・証明書・プロビジョニングプロファイルは含めていません。
+iOS版は `livetrack-receiver-ios/Voice Coach for Muse.xcodeproj` をXcodeで開きます。実機利用時には自分のPersonal Teamを選んで署名してください。個人のTeam ID・証明書・プロビジョニングプロファイルは含めていません。
 
 ## 検証状況
 

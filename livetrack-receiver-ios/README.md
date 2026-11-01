@@ -1,4 +1,4 @@
-# Muse LiveTrack Receiver — iOSネイティブ版
+# Voice Coach for Muse — iOSネイティブ版
 
 Swift / SwiftUI、iOS 17以降、外部依存なしの検証用アプリです。Bundle IDは `jp.discoverroutes.livetrackreceiver`。Web版と同じqueue.jsonとMP3を読み取ります。サーバーへのACK・削除・書き込みはありません。
 
@@ -7,14 +7,14 @@ Swift / SwiftUI、iOS 17以降、外部依存なしの検証用アプリです�
 ## 最短の実機セットアップ
 
 1. MacでXcodeを起動し、`Xcode > Settings > Accounts`（版によってApple Accounts）からApple IDを追加します。アカウント認証や利用規約の同意は本人が行ってください。
-2. `LiveTrackReceiver.xcodeproj` を開きます。Package追加、npm、CocoaPodsは不要です。
-3. 左のプロジェクトから `TARGETS > LiveTrackReceiver > Signing & Capabilities` を開きます。
+2. `Voice Coach for Muse.xcodeproj` を開きます。Package追加、npm、CocoaPodsは不要です。
+3. 左のプロジェクトから `TARGETS > Voice Coach for Muse > Signing & Capabilities` を開きます。
 4. `Automatically manage signing` をONにして、Teamに自分の **Personal Team** を指定します。Team IDや証明書は納品物に含めていません。
 5. Bundle Identifierが取得できない場合は、自分用の一意な値（例：`jp.discoverroutes.livetrackreceiver.yourname`）へ変更します。
 6. iPhoneをUSBで接続し、ロック解除します。「このコンピュータを信頼」が出たら本人が確認します。
 7. Xcodeの実行先で実機を選びます。必要なOSサポートのダウンロードがある場合は完了させます。
 8. iPhoneの `設定 > プライバシーとセキュリティ > デベロッパモード` をONにし、案内に沿って再起動・確認します。項目がない場合は先にXcodeとのペアリングを完了してください。
-9. スキーム `LiveTrackReceiver` を選び、Run（⌘R）でビルド・インストールします。
+9. スキーム `Voice Coach for Muse` を選び、Run（⌘R）でビルド・インストールします。
 10. 「信頼されていないデベロッパ」等が表示された場合のみ、iPhoneの `設定 > 一般 > VPNとデバイス管理` から自分の開発用Apple IDを信頼します。OSの案内に従ってください。
 11. iPhoneにBluetoothイヤホンを接続してSpotifyを再生し、このアプリへ戻って **テスト再生** を押します。初回のダッキング確認は「コーチング開始」も位置情報の許可も不要です。
 
@@ -22,7 +22,7 @@ Swift / SwiftUI、iOS 17以降、外部依存なしの検証用アプリです�
 
 ### Capabilities制限に当たった場合
 
-`LiveTrackReceiver-Foreground` スキームを選んでRunしてください。これは `DebugForeground` / `ReleaseForeground` 構成を使い、`UIBackgroundModes`と位置情報利用目的キーを含まない別のInfo.plistでビルドし、位置情報更新も無効化します。前景の受信・ダッキング・履歴機能は維持します。
+`Voice Coach for Muse-Foreground` スキームを選んでRunしてください。これは `DebugForeground` / `ReleaseForeground` 構成を使い、`UIBackgroundModes`と位置情報利用目的キーを含まない別のInfo.plistでビルドし、位置情報更新も無効化します。前景の受信・ダッキング・履歴機能は維持します。
 
 署名画面でBackground Modes自体が拒否される場合は、前景構成を選んだうえでCapabilities欄のBackground Modesを削除し、再ビルドしてください。位置情報用途を説明するための無音ループなどは実装していません。
 
@@ -130,7 +130,7 @@ Swift / SwiftUI、iOS 17以降、外部依存なしの検証用アプリです�
 
 ```sh
 DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer xcodebuild \
-  -project LiveTrackReceiver.xcodeproj -scheme LiveTrackReceiver \
+  -project "Voice Coach for Muse.xcodeproj" -scheme "Voice Coach for Muse" \
   -destination 'generic/platform=iOS' -derivedDataPath /tmp/livetrack-build \
   CODE_SIGNING_ALLOWED=NO build
 
@@ -156,4 +156,8 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer xcrun swiftc \
 
 ## UI/UX更新
 
-暫定アプリ名をLiveTrack Receiverに統一し、履歴のラン別表示、詳細ログの分離、リセット確認、波形アイコンを追加しました。操作名「テスト再生」は「音声テスト」、「公開デモURLを設定」は「サンプルURLで試す」に変わっています。[変更一覧・撮影手順・再検証項目](UI-UX.md)を参照してください。
+暫定アプリ名をVoice Coach for Museに統一し、履歴のラン別表示、詳細ログの分離、リセット確認、波形アイコンを追加しました。操作名「テスト再生」は「音声テスト」、「公開デモURLを設定」は「サンプルURLで試す」に変わっています。[変更一覧・撮影手順・再検証項目](UI-UX.md)を参照してください。
+
+## 試用名称
+
+アプリ名・プロジェクト名・プロダクト名は **Voice Coach for Muse**、ホーム画面の表示名は **Voice Coach** です。ヘッダーは大きな「Voice Coach」と淡い緑の小さな「for Muse」の2段表示です。Meta公式アプリではありません。公開時には名称を再検討する予定です。バンドルIDと受信・再生ロジックは変更していません。名称変更版の実機用ビルドは成功しました。受信・ダッキングの実機再検証は未実施です。
