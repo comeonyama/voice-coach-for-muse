@@ -82,6 +82,13 @@ final class ReceiverModel: NSObject, ObservableObject {
     private let location = CLLocationManager()
     private var pollTask: Task<Void, Never>?
     private var playbackTask: Task<Void, Never>?
+    private var pumpWatch: Task<Void, Never>?
+    private var pumpGeneration = UUID()
+    private var attemptTask: Task<Bool, Error>?
+    private var progressAt = ContinuousClock.now
+    private var lastAudioPosition: TimeInterval = 0
+    private var watchdogExpired = false
+    private var interruptedPlayback = false
     private var pending: [PlaybackItem] = []
     private var current: PlaybackItem?
     private var player: AVAudioPlayer?
@@ -139,11 +146,17 @@ final class ReceiverModel: NSObject, ObservableObject {
         guard let source = QueueURL.source(queueURL) else {
             notice = "設定で有効な配信URLを指定してください。https:// で始まるURLを推奨します。"; return
         }
+        // Explicit user start establishes a new playback generation. The OS
+        // arbitrates audio-session activation if another app still owns audio.
+        pumpGeneration = UUID()
+        interruptionActive = false; interruptedPlayback = false
         running = true; paused = false; resumeAllowed = true
         lastPoll = nil
         ledger.resetAttempts()
         runToken = UUID()
         offline = false; networkFailures = 0
+        startPumpWatch()
+        drain()
         armTimeout()
         updateIdleTimer(); updateLocation()
         log("受信開始", "間隔 \(Int(interval))秒")
@@ -205,6 +218,7 @@ final class ReceiverModel: NSObject, ObservableObject {
     }
 
     func stop() {
+        pumpWatch?.cancel(); pumpWatch = nil
         cancelKick()
         timeoutTask?.cancel(); timeoutTask = nil
         finalAnnouncement = nil; stoppingForTimeout = false
@@ -328,14 +342,61 @@ final class ReceiverModel: NSObject, ObservableObject {
         }
     }
 
+    private func startPumpWatch() {
+        pumpWatch?.cancel()
+        let token = runToken
+        pumpWatch = Task {
+            var waitingHead: UUID?
+            var waitingSince = ContinuousClock.now
+            while !Task.isCancelled, running, runToken == token {
+                do { try await Task.sleep(for: .seconds(1)) } catch { return }
+                let now = ContinuousClock.now
+                guard !offline, !stoppingForTimeout, !paused, !interruptionActive else {
+                    progressAt = now; waitingHead = nil
+                    continue
+                }
+                if let current {
+                    waitingHead = nil
+                    guard let attemptTask, !attemptTask.isCancelled else { continue }
+                    if let player, player.currentTime > lastAudioPosition {
+                        lastAudioPosition = player.currentTime
+                        progressAt = now
+                    }
+                    if now - progressAt >= .seconds(15) {
+                        log("再生監視", "\(current.message.id) / 15秒間進行なし・再初期化")
+                        watchdogExpired = true
+                        attemptTask.cancel()
+                        player?.stop()
+                        resolvePlayback(false)
+                        if speaker.isSpeaking { speaker.stopSpeaking(at: .immediate) }
+                        releaseAudio()
+                    }
+                } else if let head = pending.first {
+                    if waitingHead != head.id { waitingHead = head.id; waitingSince = now }
+                    if now - waitingSince >= .seconds(15) {
+                        log("再生監視", "\(head.message.id) / 待機中のポンプを再起動")
+                        pumpGeneration = UUID()
+                        playbackTask?.cancel(); playbackTask = nil
+                        player?.stop(); player = nil; releaseAudio()
+                        waitingSince = now
+                    }
+                    drain()
+                } else { waitingHead = nil }
+            }
+        }
+    }
+
     private func drain() {
         guard !offline, !stoppingForTimeout, playbackTask == nil, !pending.isEmpty, !paused, !interruptionActive else { return }
         busy = true
+        let generation = pumpGeneration
         playbackTask = Task { [weak self] in
-            guard let self else { return }
+            guard let self, generation == self.pumpGeneration else { return }
             defer {
-                self.player = nil; self.current = nil
-                self.releaseAudio(); self.busy = false; self.playbackTask = nil; self.updateCount(); self.drain()
+                if generation == self.pumpGeneration {
+                    self.player = nil; self.current = nil
+                    self.releaseAudio(); self.busy = false; self.playbackTask = nil; self.updateCount(); self.drain()
+                }
             }
             while !self.pending.isEmpty, !Task.isCancelled {
                 let item = self.pending.removeFirst()
@@ -446,11 +507,23 @@ final class ReceiverModel: NSObject, ObservableObject {
         for attempt in 0...4 {
             try Task.checkCancellation()
             do {
-                if try await playMP3(item) { return }
+                progressAt = .now
+                lastAudioPosition = 0
+                watchdogExpired = false
+                setStatus(item, "読み込み中")
+                let attempt = Task { try await self.playMP3(item) }
+                attemptTask = attempt
+                defer { attemptTask = nil }
+                let success = try await withTaskCancellationHandler {
+                    try await attempt.value
+                } onCancel: {
+                    attempt.cancel()
+                }
+                if success { return }
                 throw ReceiverError.message("プレイヤーが正常終了しませんでした")
             } catch {
                 try Task.checkCancellation()
-                let reason = error as NSError
+                let reason = (watchdogExpired ? ReceiverError.message("15秒間再生が進みませんでした") : error) as NSError
                 log("音声再生失敗", "\(item.key?.session ?? "test") / \(item.message.id) / 試行\(attempt + 1) / \(reason.domain) \(reason.code) / \(reason.localizedDescription)")
                 var diagnostics = defaults.stringArray(forKey: "playbackDiagnostics") ?? []
                 if let last = logs.last { diagnostics.append(last) }
@@ -560,7 +633,7 @@ final class ReceiverModel: NSObject, ObservableObject {
                 guard let self else { return }
                 self.log("出力経路変更", "reason=\(reason ?? 0)")
                 if reason == AVAudioSession.RouteChangeReason.oldDeviceUnavailable.rawValue, self.busy {
-                    self.paused = true; self.player?.pause(); self.releaseAudio()
+                    self.paused = true; self.resumeAllowed = false; self.player?.pause(); self.releaseAudio()
                     self.notice = "イヤホン接続が切れました。接続を確認して「音声を再開」を押してください。"
                 }
             }
@@ -578,14 +651,21 @@ final class ReceiverModel: NSObject, ObservableObject {
     private func handleInterruption(type: UInt?, options: UInt) {
         guard let type, let kind = AVAudioSession.InterruptionType(rawValue: type) else { return }
         if kind == .began {
-            interruptionActive = true; resumeAllowed = !paused; paused = true
+            if !interruptionActive {
+                interruptedPlayback = player != nil && completion != nil
+                resumeAllowed = !paused
+            }
+            interruptionActive = true; paused = true
             player?.pause(); sessionActive = false; audioStatus = "割り込み中（OSが無効化）"
             log("割り込み開始", current?.message.id ?? "待機中")
         } else {
+            guard interruptionActive else { return }
             interruptionActive = false
             let shouldResume = AVAudioSession.InterruptionOptions(rawValue: options).contains(.shouldResume)
             log("割り込み終了", "shouldResume=\(shouldResume)")
-            if shouldResume && resumeAllowed { resume() }
+            if !interruptedPlayback && resumeAllowed {
+                paused = false; drain()
+            } else if shouldResume && resumeAllowed { resume() }
             else { paused = true; notice = "割り込みが終了しました。「音声を再開」で続行できます。" }
         }
     }
