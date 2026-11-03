@@ -170,6 +170,7 @@ final class ReceiverModel: NSObject, ObservableObject {
         guard let start = kickStart, let url = LiveTrackKick.endpoint(detectionURL, key: detectionKey) else { return }
         kickStart = nil
         let token = runToken
+        announce("LiveTrack の開始を待っています")
         kickTask = Task {
             let clock = ContinuousClock()
             let end = start.advanced(by: .seconds(1800))
@@ -267,7 +268,10 @@ final class ReceiverModel: NSObject, ObservableObject {
                 let a = $0.element.timestamp!, b = $1.element.timestamp!
                 return a == b ? $0.offset < $1.offset : a < b
             }.map(\.element)
-            if (kickStart != nil || kickTask != nil) && queue.session == LiveTrackKick.today() { cancelKick() }
+            if kickStart != nil || kickTask != nil {
+                let today = LiveTrackKick.today()
+                if queue.session == today || queue.session.hasPrefix(today + "-") { cancelKick() }
+            }
             liveSession = queue.session
             let firstSync = defaults.data(forKey: "played.v1") == nil && !defaults.bool(forKey: "queueSynced")
             var persistPlayed = firstSync
