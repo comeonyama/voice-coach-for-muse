@@ -3,6 +3,7 @@ import SwiftUI
 struct ContentView: View {
     @StateObject private var model = ReceiverModel()
     @Environment(\.scenePhase) private var phase
+    @State private var detectionDraft = DetectionDraft()
     @State private var showSettings = false
     @AppStorage("showStartGuide") private var showStartGuide = true
     @State private var presentingGuide = false
@@ -19,7 +20,11 @@ struct ContentView: View {
                         Text("Voice Coach for Muse").font(.title.bold())
                             .lineLimit(1).minimumScaleFactor(0.55).accessibilityAddTraits(.isHeader)
                         Spacer()
-                        Button { showSettings = true } label: {
+                        Button {
+                            detectionDraft.url = model.detectionURL
+                            detectionDraft.key = model.detectionKey
+                            showSettings = true
+                        } label: {
                             Image(systemName: "gearshape.fill").font(.title2)
                                 .frame(width: 44, height: 44)
                         }.foregroundStyle(.secondary).accessibilityLabel("設定")
@@ -64,7 +69,10 @@ struct ContentView: View {
                     }.padding().background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14)).padding(.horizontal)
                 }
             }
-            .sheet(isPresented: $showSettings) { settings }
+            .sheet(isPresented: $showSettings, onDismiss: {
+                if model.detectionURL != detectionDraft.url { model.detectionURL = detectionDraft.url }
+                if model.detectionKey != detectionDraft.key { model.detectionKey = detectionDraft.key }
+            }) { settings }
         }
         .tint(accent)
         .preferredColorScheme(.light)
@@ -180,7 +188,8 @@ struct ContentView: View {
     }
 
     private var settings: some View {
-        NavigationStack {
+        @Bindable var draft = detectionDraft
+        return NavigationStack {
             Form {
                 Section("接続先") {
                     TextField("ベースURL または queue.json のURL", text: $model.queueURL, axis: .vertical)
@@ -200,10 +209,8 @@ struct ContentView: View {
                         .disabled(model.settingsLocked)
                 }
                 Section {
-                    DetectionField("検知スクリプト URL", prompt: "https://…/exec", value: model.detectionURL,
-                                   keyboard: .URL) { model.detectionURL = $0 }
-                    DetectionField("検知スクリプト キー", prompt: "キー", value: model.detectionKey,
-                                   keyboard: .asciiCapable) { model.detectionKey = $0 }
+                    DetectionField(title: "検知スクリプト URL", prompt: "https://…/exec", keyboard: .URL, text: $draft.url)
+                    DetectionField(title: "検知スクリプト キー", prompt: "キー", keyboard: .asciiCapable, text: $draft.key)
                 } header: {
                     Text("LiveTrack 開始検知")
                 } footer: {
@@ -246,22 +253,17 @@ struct ContentView: View {
     }
 }
 
+@Observable private final class DetectionDraft {
+    var url = ""
+    var key = ""
+}
+
 private struct DetectionField: View {
     let title: String
     let prompt: String
     let keyboard: UIKeyboardType
-    let save: (String) -> Void
-    @State private var text: String
+    @Binding var text: String
     @FocusState private var focused: Bool
-
-    init(_ title: String, prompt: String, value: String, keyboard: UIKeyboardType,
-         save: @escaping (String) -> Void) {
-        self.title = title
-        self.prompt = prompt
-        self.keyboard = keyboard
-        self.save = save
-        _text = State(initialValue: value)
-    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -292,6 +294,5 @@ private struct DetectionField: View {
                 .contentShape(Rectangle())
                 .simultaneousGesture(TapGesture().onEnded { focused = true })
         }
-        .onChange(of: text) { _, value in save(value) }
     }
 }
