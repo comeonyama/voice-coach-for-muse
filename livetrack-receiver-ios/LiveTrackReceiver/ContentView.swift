@@ -5,6 +5,8 @@ struct ContentView: View {
     @StateObject private var model = ReceiverModel()
     @Environment(\.scenePhase) private var phase
     @State private var showSettings = false
+    @AppStorage("showStartGuide") private var showStartGuide = true
+    @State private var presentingGuide = false
     @State private var confirmReset = false
     private let accent = Color(red: 0.84, green: 0.97, blue: 0.67)
     private let background = Color(red: 0.06, green: 0.085, blue: 0.07)
@@ -26,52 +28,37 @@ struct ContentView: View {
             return ($0.id.source + $0.id.session) < ($1.id.source + $1.id.session)
         }
     }
-    private var activity: String {
-        if model.paused { return "音声を一時停止中" }
-        if model.busy { return "音声をお届け中" }
-        return model.running ? "コーチングを受信中" : "受信停止中"
-    }
-
     var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 24) {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Voice Coach")
-                            .font(.system(size: 32, weight: .bold, design: .rounded))
-                        Text("for Muse")
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(accent)
+                    (Text("Voice Coach").bold() + Text(" for Muse").foregroundColor(accent))
+                        .font(.system(.largeTitle, design: .rounded))
+                        .lineLimit(1).minimumScaleFactor(0.5)
+                        .accessibilityAddTraits(.isHeader)
+                    VStack(alignment: .leading, spacing: 12) {
+                        HStack {
+                            Circle().frame(width: 14, height: 14)
+                            Text(model.running ? "受信中" : "受信停止中").font(.title.bold())
+                        }.foregroundStyle(model.running ? accent : Color.gray)
+                        Button {
+                            if model.running || model.busy {
+                                model.stop()
+                            } else {
+                                model.start()
+                                presentingGuide = model.running && showStartGuide
+                            }
+                        } label: {
+                            Text(model.running ? "コーチング停止" : model.busy ? "音声テストを停止" : "コーチング開始")
+                                .font(.title3.bold()).frame(maxWidth: .infinity).padding(.vertical, 12)
+                        }
+                        .buttonStyle(.borderedProminent).tint(accent).foregroundStyle(.black)
                     }
-                    .accessibilityElement(children: .ignore)
-                    .accessibilityLabel("Voice Coach for Muse")
-                    HStack(spacing: 8) {
-                        Circle().fill(model.running || model.busy ? accent : .gray).frame(width: 8, height: 8)
-                        Text(activity).font(.subheadline.weight(.semibold)).foregroundStyle(accent)
-                    }
-                    Text(model.latestText)
-                        .font(.system(size: 30, weight: .semibold)).lineSpacing(8)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .accessibilityLabel("コーチング: \(model.latestText)")
-                    Button {
-                        if model.running || model.busy { model.stop() } else { model.start() }
-                    } label: {
-                        Text(model.running || model.busy ? "停止" : "コーチング開始")
-                            .font(.title3.bold()).frame(maxWidth: .infinity).padding(.vertical, 12)
-                    }
-                    .buttonStyle(.borderedProminent).tint(accent).foregroundStyle(.black)
                     if model.paused {
                         Button("音声を再開") { model.resume() }
                             .buttonStyle(.borderedProminent).tint(.orange)
                     }
                     connectionStatus
-                    Toggle("開始中は自動ロックを防止", isOn: $model.preventLock).tint(accent)
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("イヤホンをつなぎ、音楽を流しながら音声を確認できます。")
-                            .font(.footnote).foregroundStyle(.secondary)
-                        Button("音声テスト", systemImage: "speaker.wave.2") { model.testPlay() }
-                            .disabled(model.busy || model.pendingCount > 0).buttonStyle(.bordered)
-                    }
                     if !model.notice.isEmpty { Text(model.notice).font(.footnote).foregroundStyle(accent) }
                     Divider()
                     HStack {
@@ -83,10 +70,24 @@ struct ContentView: View {
                         runHeading(run, number: runs.count)
                         ForEach(Array(run.entries.prefix(3))) { entry in historyRow(entry) }
                     } else { Text("届いたコーチングがここに残ります。").foregroundStyle(.secondary) }
+                    Divider()
+                    Toggle("開始中は自動ロックを防止", isOn: $model.preventLock).tint(accent)
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("イヤホンをつなぎ、音楽を流しながら音声を確認できます。")
+                            .font(.footnote).foregroundStyle(.secondary)
+                        Button("音声テスト", systemImage: "speaker.wave.2") { model.testPlay() }
+                            .disabled(model.busy || model.pendingCount > 0).buttonStyle(.bordered)
+                    }
                 }.padding(24)
             }
             .background(background)
             .toolbar { ToolbarItem(placement: .topBarTrailing) { Button("設定", systemImage: "gearshape") { showSettings = true } } }
+            .alert("Muse に LiveTrack を監視するよう指示してください", isPresented: $presentingGuide) {
+                Button("OK", role: .cancel) { }
+                Button("今後このダイアログは表示しない") { showStartGuide = false }
+            } message: {
+                Text("このアプリは受信専用です。Muse が LiveTrack の監視を始めると、コーチングが届きます。")
+            }
             .sheet(isPresented: $showSettings) { settings }
         }
         .tint(accent)
@@ -121,13 +122,21 @@ struct ContentView: View {
     }
 
     private func historyRow(_ entry: HistoryEntry) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
+        let waiting = entry.status == "待機中"
+        return VStack(alignment: .leading, spacing: 6) {
             Text(entry.message.timestamp?.formatted(date: .omitted, time: .standard) ?? "時刻不明")
                 .font(.caption).foregroundStyle(.secondary)
             Text(entry.message.text).font(.body)
-            Text(entry.status).font(.caption).foregroundStyle(accent)
-            Divider()
+            if waiting {
+                Text("未再生 · 待機中").font(.caption.bold())
+                    .padding(.horizontal, 9).padding(.vertical, 4)
+                    .foregroundStyle(.black).background(accent, in: Capsule())
+            } else {
+                Text(entry.status).font(.caption).foregroundStyle(.secondary)
+            }
         }.frame(maxWidth: .infinity, alignment: .leading)
+        .padding(10)
+        .background(waiting ? accent.opacity(0.14) : .clear, in: RoundedRectangle(cornerRadius: 10))
     }
 
     private var historyScreen: some View {
@@ -185,6 +194,9 @@ struct ContentView: View {
                         .font(.caption)
                     Text("サンプルでは3件の短い確認音を受信できます。設定済みの接続先URLは置き換わります。")
                         .font(.caption).foregroundStyle(.secondary)
+                }
+                Section("案内") {
+                    Toggle("開始時の案内を表示", isOn: $showStartGuide)
                 }
                 Section("バックグラウンド受信") {
                     Toggle("開始中に位置情報更新を利用", isOn: $model.useLocation).disabled(model.foregroundOnly)
