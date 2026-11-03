@@ -186,7 +186,6 @@ struct ContentView: View {
                         .keyboardType(.URL).textInputAutocapitalization(.never).autocorrectionDisabled()
                         .disabled(model.settingsLocked)
                     Button("Worker に切り替える") { model.queueURL = ReceiverModel.workerURL }.disabled(model.settingsLocked)
-                    Button("旧 XServer に切り替える") { model.queueURL = "https://discoverroutes.jp/livetrack/" }.disabled(model.settingsLocked)
                     Button("サンプルURLで試す") { model.queueURL = ReceiverModel.demoURL }.disabled(model.settingsLocked)
                     Text(model.settingsLocked
                          ? "接続先を変更するには、メイン画面で受信・再生を停止してください。"
