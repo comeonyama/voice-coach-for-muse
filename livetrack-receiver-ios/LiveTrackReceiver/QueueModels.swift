@@ -11,10 +11,24 @@ struct CoachingMessage: Codable {
         return now.timeIntervalSince(timestamp) >= 10 * 60
     }
 
-    var timestamp: Date? {
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        return formatter.date(from: ts) ?? ISO8601DateFormatter().date(from: ts)
+    let timestamp: Date?
+    private enum CodingKeys: String, CodingKey { case id, ts, audio, text }
+
+    init(id: String, ts: String, audio: String?, text: String) {
+        self.id = id
+        self.ts = ts
+        self.audio = audio
+        self.text = text
+        timestamp = (try? Date.ISO8601FormatStyle(includingFractionalSeconds: true).parse(ts))
+            ?? (try? Date.ISO8601FormatStyle().parse(ts))
+    }
+
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        try self.init(id: values.decode(String.self, forKey: .id),
+                      ts: values.decode(String.self, forKey: .ts),
+                      audio: values.decodeIfPresent(String.self, forKey: .audio),
+                      text: values.decode(String.self, forKey: .text))
     }
 }
 

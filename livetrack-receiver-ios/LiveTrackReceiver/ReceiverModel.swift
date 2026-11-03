@@ -7,7 +7,7 @@ import UIKit
 final class ReceiverModel: NSObject, ObservableObject {
     static let workerURL = "https://vcm-queue.chibiken.workers.dev"
     static let demoURL = "https://muse-livetrack-receiver-20261101.sunny-moon-4267.chatgpt.site/demo-queue.json"
-    @Published var queueURL: String { didSet { defaults.set(queueURL, forKey: "queueURL") } }
+    @Published var queueURL: String { didSet { cachedRuns = nil; defaults.set(queueURL, forKey: "queueURL") } }
     var detectionURL: String { didSet { defaults.set(detectionURL, forKey: "detectionURL") } }
     var detectionKey: String { didSet { defaults.set(detectionKey, forKey: "detectionKey") } }
     var detectionEnabled: Bool { LiveTrackKick.endpoint(detectionURL, key: detectionKey) != nil }
@@ -31,12 +31,16 @@ final class ReceiverModel: NSObject, ObservableObject {
     @Published private(set) var pendingCount = 0
     @Published private(set) var audioStatus = "未使用"
     @Published private(set) var locationStatus = "停止中"
-    @Published private(set) var history: [HistoryEntry] = []
-    @Published private var archives = [String: HistoryArchive]()
-    @Published private var liveSession: String?
+    @Published private(set) var history: [HistoryEntry] = [] { didSet { cachedRuns = nil } }
+    private var archives = [String: HistoryArchive]()
+    private var liveSession: String? { didSet { if liveSession != oldValue { cachedRuns = nil } } }
+    private var cachedRuns: [HistoryRun]?
     var historyRuns: [HistoryRun] {
+        if let cachedRuns { return cachedRuns }
         guard let source = QueueURL.source(queueURL)?.absoluteString else { return [] }
-        return HistoryRun.merged(source: source, live: history, activeSession: liveSession, archive: archives[source])
+        let runs = HistoryRun.merged(source: source, live: history, activeSession: liveSession, archive: archives[source])
+        cachedRuns = runs
+        return runs
     }
 
     func refreshHistory() async {
@@ -47,10 +51,18 @@ final class ReceiverModel: NSObject, ObservableObject {
             let (data, response) = try await network.data(for: request)
             try Task.checkCancellation()
             guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else { return }
-            archives[source.absoluteString] = try JSONDecoder().decode(HistoryArchive.self, from: data)
+            let archive = try await Self.decodeArchive(data)
+            try Task.checkCancellation()
+            objectWillChange.send()
+            archives[source.absoluteString] = archive
+            cachedRuns = nil
         } catch {
             if !Task.isCancelled { log("履歴取得失敗", error.localizedDescription) }
         }
+    }
+
+    private nonisolated static func decodeArchive(_ data: Data) async throws -> HistoryArchive {
+        try JSONDecoder().decode(HistoryArchive.self, from: data)
     }
 
     @Published private(set) var logs: [String] = []
