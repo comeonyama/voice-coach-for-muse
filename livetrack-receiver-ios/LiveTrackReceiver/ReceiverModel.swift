@@ -5,8 +5,20 @@ import UIKit
 
 @MainActor
 final class ReceiverModel: NSObject, ObservableObject {
+    static let workerURL = "https://vcm-queue.chibiken.workers.dev"
     static let demoURL = "https://muse-livetrack-receiver-20261101.sunny-moon-4267.chatgpt.site/demo-queue.json"
     @Published var queueURL: String { didSet { defaults.set(queueURL, forKey: "queueURL") } }
+    @Published var mode: PlaybackMode { didSet { defaults.set(mode.rawValue, forKey: "playbackMode") } }
+    @Published var voiceID: String { didSet { defaults.set(voiceID, forKey: "voiceID") } }
+    @Published var speechSpeed: Double { didSet { defaults.set(speechSpeed, forKey: "speechSpeed") } }
+    var voices: [AVSpeechSynthesisVoice] {
+        AVSpeechSynthesisVoice.speechVoices().filter { $0.language == "ja-JP" }.sorted {
+            if $0.quality != $1.quality { return $0.quality.rawValue > $1.quality.rawValue }
+            return $0.identifier < $1.identifier
+        }
+    }
+    private let synth = AVSpeechSynthesizer()
+    private var utterance: AVSpeechUtterance?
     @Published var interval: Double { didSet { defaults.set(interval, forKey: "interval") } }
     @Published var preventLock: Bool { didSet { defaults.set(preventLock, forKey: "preventLock"); updateIdleTimer() } }
     @Published var useLocation: Bool { didSet { defaults.set(useLocation, forKey: "useLocation"); updateLocation() } }
@@ -51,7 +63,10 @@ final class ReceiverModel: NSObject, ObservableObject {
 
     init(defaults: UserDefaults) {
         self.defaults = defaults
-        queueURL = defaults.string(forKey: "queueURL") ?? Self.demoURL
+        queueURL = defaults.string(forKey: "queueURL") ?? Self.workerURL
+        mode = defaults.string(forKey: "playbackMode").flatMap(PlaybackMode.init(rawValue:)) ?? .automatic
+        voiceID = defaults.string(forKey: "voiceID") ?? ""
+        speechSpeed = defaults.object(forKey: "speechSpeed") as? Double ?? 1
         let storedInterval = defaults.double(forKey: "interval")
         interval = storedInterval >= 1 && storedInterval <= 300 ? storedInterval : 5
         preventLock = defaults.object(forKey: "preventLock") as? Bool ?? true
@@ -60,6 +75,8 @@ final class ReceiverModel: NSObject, ObservableObject {
         let played = saved.flatMap { try? JSONDecoder().decode(Set<MessageKey>.self, from: $0) } ?? []
         ledger = QueueLedger(played: played)
         super.init()
+        synth.usesApplicationAudioSession = true
+        synth.delegate = self
         let configuration = URLSessionConfiguration.ephemeral
         configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
         configuration.timeoutIntervalForRequest = 5
@@ -107,6 +124,8 @@ final class ReceiverModel: NSObject, ObservableObject {
         running = false; runToken = UUID()
         pollTask?.cancel(); pollTask = nil
         playbackTask?.cancel()
+        synth.stopSpeaking(at: .immediate)
+        utterance = nil
         player?.stop()
         if let current { setStatus(current, "停止（未完了）") }
         resolvePlayback(false)
@@ -169,7 +188,7 @@ final class ReceiverModel: NSObject, ObservableObject {
                 guard ledger.accept(key) else { continue }
                 log("新規メッセージ検出", message.id)
                 if current == nil { latestText = message.text }
-                pending.append(PlaybackItem(message: message, key: key, url: QueueURL.audio(message.audio, relativeTo: source)))
+                pending.append(PlaybackItem(message: message, key: key, url: message.audio.flatMap { QueueURL.audio($0, relativeTo: source) }))
             }
             if current == nil, pending.isEmpty, let last = messages.last { latestText = last.text }
             lastPoll = Date(); log("ポーリング成功", "\(queue.session) / \(messages.count)件")
@@ -193,30 +212,17 @@ final class ReceiverModel: NSObject, ObservableObject {
                 self.current = item; self.latestText = item.message.text; self.updateCount()
                 self.setStatus(item, "読み込み中")
                 do {
-                    guard let url = item.url else { throw ReceiverError.message("音声URLが不正です") }
-                    let data: Data
-                    if url.isFileURL { data = try Data(contentsOf: url) }
-                    else {
-                        let request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 5)
-                        let (download, response) = try await self.network.data(for: request)
-                        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
-                            throw ReceiverError.message("音声HTTP \((response as? HTTPURLResponse)?.statusCode ?? 0)")
-                        }
-                        data = download
-                    }
-                    try Task.checkCancellation()
-                    while self.paused || self.interruptionActive { try await Task.sleep(for: .milliseconds(200)) }
-                    let audio = try AVAudioPlayer(data: data)
-                    audio.delegate = self
-                    guard audio.prepareToPlay() else { throw ReceiverError.message("prepareToPlay失敗") }
-                    self.player = audio
-                    try self.activateAudio()
                     let began = Date()
-                    let success = await withCheckedContinuation { continuation in
-                        self.completion = continuation
-                        if audio.play() {
-                            self.log("再生開始", item.message.id); self.setStatus(item, "再生中")
-                        } else { self.resolvePlayback(false) }
+                    let success: Bool
+                    switch self.mode.route(for: item.message) {
+                    case .skip:
+                        self.setStatus(item, "スキップ（音声なし）")
+                        continue
+                    case .speech:
+                        while self.paused || self.interruptionActive { try await Task.sleep(for: .milliseconds(200)) }
+                        success = try await self.speak(item)
+                    case .mp3:
+                        success = try await self.playMP3(item)
                     }
                     try Task.checkCancellation()
                     let elapsed = String(format: "%.2f", Date().timeIntervalSince(began))
@@ -239,6 +245,50 @@ final class ReceiverModel: NSObject, ObservableObject {
                     do { try await Task.sleep(for: .milliseconds(300)) } catch { break }
                 }
             }
+        }
+    }
+
+    private func playMP3(_ item: PlaybackItem) async throws -> Bool {
+        guard let url = item.url else { throw ReceiverError.message("音声URLが不正です") }
+        let data: Data
+        if url.isFileURL { data = try Data(contentsOf: url) }
+        else {
+            let request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 5)
+            let (download, response) = try await self.network.data(for: request)
+            guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+                throw ReceiverError.message("音声HTTP \((response as? HTTPURLResponse)?.statusCode ?? 0)")
+            }
+            data = download
+        }
+        try Task.checkCancellation()
+        while self.paused || self.interruptionActive { try await Task.sleep(for: .milliseconds(200)) }
+        let audio = try AVAudioPlayer(data: data)
+        audio.delegate = self
+        guard audio.prepareToPlay() else { throw ReceiverError.message("prepareToPlay失敗") }
+        self.player = audio
+        try self.activateAudio()
+        return await withCheckedContinuation { continuation in
+            self.completion = continuation
+            if audio.play() {
+                self.log("再生開始", item.message.id); self.setStatus(item, "再生中")
+            } else { self.resolvePlayback(false) }
+        }
+    }
+
+    private func speak(_ item: PlaybackItem) async throws -> Bool {
+        try Task.checkCancellation()
+        let speech = AVSpeechUtterance(string: item.message.text)
+        let available = voices
+        speech.voice = available.first { $0.identifier == voiceID } ?? available.first ?? AVSpeechSynthesisVoice(language: "ja-JP")
+        speech.rate = AVSpeechUtteranceDefaultSpeechRate * Float(speechSpeed)
+        try activateAudio()
+        defer { utterance = nil; releaseAudio() }
+        utterance = speech
+        setStatus(item, "読み上げ中")
+        log("読み上げ開始", item.message.id)
+        return await withCheckedContinuation { continuation in
+            completion = continuation
+            synth.speak(speech)
         }
     }
 
@@ -275,6 +325,10 @@ final class ReceiverModel: NSObject, ObservableObject {
         guard !interruptionActive else { notice = "電話などの割り込み終了後に再開できます。"; return }
         resumeAllowed = true
         do {
+            if utterance != nil, completion != nil {
+                try activateAudio()
+                if synth.isPaused { synth.continueSpeaking() }
+            }
             if let player, completion != nil {
                 try activateAudio()
                 guard player.play() else { throw ReceiverError.message("割り込み後の再開失敗") }
@@ -282,7 +336,7 @@ final class ReceiverModel: NSObject, ObservableObject {
             }
             paused = false; drain()
         } catch {
-            log("再生エラー", error.localizedDescription); paused = false; resolvePlayback(false); releaseAudio()
+            log("再生エラー", error.localizedDescription); paused = false; synth.stopSpeaking(at: .immediate); resolvePlayback(false); releaseAudio()
         }
     }
 
@@ -299,7 +353,7 @@ final class ReceiverModel: NSObject, ObservableObject {
                 guard let self else { return }
                 self.log("出力経路変更", "reason=\(reason ?? 0)")
                 if reason == AVAudioSession.RouteChangeReason.oldDeviceUnavailable.rawValue, self.busy {
-                    self.paused = true; self.player?.pause(); self.releaseAudio()
+                    self.paused = true; self.player?.pause(); self.synth.pauseSpeaking(at: .immediate); self.releaseAudio()
                     self.notice = "イヤホン接続が切れました。接続を確認して「音声を再開」を押してください。"
                 }
             }
@@ -315,7 +369,7 @@ final class ReceiverModel: NSObject, ObservableObject {
         guard let type, let kind = AVAudioSession.InterruptionType(rawValue: type) else { return }
         if kind == .began {
             interruptionActive = true; resumeAllowed = !paused; paused = true
-            player?.pause(); sessionActive = false; audioStatus = "割り込み中（OSが無効化）"
+            synth.pauseSpeaking(at: .immediate); player?.pause(); sessionActive = false; audioStatus = "割り込み中（OSが無効化）"
             log("割り込み開始", current?.message.id ?? "待機中")
         } else {
             interruptionActive = false
@@ -357,6 +411,22 @@ final class ReceiverModel: NSObject, ObservableObject {
         default:
             location.stopUpdatingLocation(); location.allowsBackgroundLocationUpdates = false
             locationStatus = "許可なし · 前景で利用してください"
+        }
+    }
+}
+
+extension ReceiverModel: AVSpeechSynthesizerDelegate {
+    nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish speech: AVSpeechUtterance) {
+        Task { @MainActor in
+            guard utterance === speech else { return }
+            resolvePlayback(true)
+        }
+    }
+
+    nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didCancel speech: AVSpeechUtterance) {
+        Task { @MainActor in
+            guard utterance === speech else { return }
+            resolvePlayback(false)
         }
     }
 }

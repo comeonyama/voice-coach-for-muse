@@ -27,9 +27,18 @@ import Foundation
         precondition(restored.accept(otherSource))
         restored.resetAll()
         precondition(restored.accept(key))
-        let json = #"{"session":"test","messages":[{"id":"a","ts":"2026-11-01T10:15:30+09:00","audio":"audio/a.mp3","text":"こんにちは"},{"id":"b","ts":"2026-11-01T10:15:30.123+09:00","audio":"b.mp3","text":"次です"}]}"#
+        let json = #"{"session":"test","messages":[{"id":"a","ts":"2026-11-01T10:15:30+09:00","audio":"audio/a.mp3","text":"こんにちは"},{"id":"b","ts":"2026-11-01T10:15:30.123+09:00","audio":null,"text":"次です"}]}"#
         let queue = try JSONDecoder().decode(CoachingQueue.self, from: Data(json.utf8))
+        precondition(QueueURL.source("https://example.com")?.path == "/queue.json")
+        precondition(QueueURL.source("https://example.com/livetrack/")?.path == "/livetrack/queue.json")
         precondition(queue.messages.count == 2)
+        let audio = queue.messages[0], text = queue.messages[1]
+        precondition(PlaybackMode.automatic.route(for: audio) == .mp3)
+        precondition(PlaybackMode.automatic.route(for: text) == .speech)
+        precondition(PlaybackMode.device.route(for: audio) == .speech)
+        precondition(PlaybackMode.device.route(for: text) == .speech)
+        precondition(PlaybackMode.muse.route(for: audio) == .mp3)
+        precondition(PlaybackMode.muse.route(for: text) == .skip)
         precondition(queue.messages.allSatisfy { $0.timestamp != nil })
         precondition(queue.messages[0].timestamp! < queue.messages[1].timestamp!)
         print("PASS: relative URLs, invalid schemes, cache query, duplicate prevention, relaunch persistence, failed-item retry, session/source isolation, reset, JSON/date contract")

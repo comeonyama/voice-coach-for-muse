@@ -3,13 +3,29 @@ import Foundation
 struct CoachingMessage: Codable {
     let id: String
     let ts: String
-    let audio: String
+    let audio: String?
     let text: String
 
     var timestamp: Date? {
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         return formatter.date(from: ts) ?? ISO8601DateFormatter().date(from: ts)
+    }
+}
+
+enum PlaybackRoute { case mp3, speech, skip }
+
+enum PlaybackMode: String, CaseIterable {
+    case automatic = "自動"
+    case device = "オンデバイスTTS"
+    case muse = "Muse TTS"
+
+    func route(for message: CoachingMessage) -> PlaybackRoute {
+        switch self {
+        case .automatic: return message.audio == nil ? .speech : .mp3
+        case .device: return .speech
+        case .muse: return message.audio == nil ? .skip : .mp3
+        }
     }
 }
 
@@ -61,7 +77,7 @@ enum QueueURL {
         guard let url = URL(string: string.trimmingCharacters(in: .whitespacesAndNewlines)),
               ["https", "http"].contains(url.scheme?.lowercased() ?? ""), url.host != nil,
               url.user == nil, url.password == nil else { return nil }
-        return url
+        return url.pathExtension.lowercased() == "json" ? url : url.appendingPathComponent("queue.json")
     }
 
     static func audio(_ path: String, relativeTo base: URL) -> URL? {

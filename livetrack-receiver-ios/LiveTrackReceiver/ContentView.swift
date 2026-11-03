@@ -1,4 +1,5 @@
 import SwiftUI
+import AVFoundation
 
 struct ContentView: View {
     @StateObject private var model = ReceiverModel()
@@ -172,9 +173,11 @@ struct ContentView: View {
         NavigationStack {
             Form {
                 Section("接続先") {
-                    TextField("配信URL（queue.json）", text: $model.queueURL, axis: .vertical)
+                    TextField("ベースURL または queue.json のURL", text: $model.queueURL, axis: .vertical)
                         .keyboardType(.URL).textInputAutocapitalization(.never).autocorrectionDisabled()
                         .disabled(model.settingsLocked)
+                    Button("Worker に切り替える") { model.queueURL = ReceiverModel.workerURL }.disabled(model.settingsLocked)
+                    Button("旧 XServer に切り替える") { model.queueURL = "https://discoverroutes.jp/livetrack/" }.disabled(model.settingsLocked)
                     Button("サンプルURLで試す") { model.queueURL = ReceiverModel.demoURL }.disabled(model.settingsLocked)
                     Text(model.settingsLocked
                          ? "接続先を変更するには、メイン画面で受信・再生を停止してください。"
@@ -190,6 +193,25 @@ struct ContentView: View {
                         .font(.caption)
                     if model.foregroundOnly { Text("このバージョンはアプリを表示している間のみ利用できます。") }
                 }
+                Section("再生方法") {
+                    Picker("再生方法", selection: $model.mode) {
+                        ForEach(PlaybackMode.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+                    }
+                    if model.mode != .muse {
+                        let voices = model.voices
+                        Picker("日本語の声", selection: $model.voiceID) {
+                            Text("自動（最高品質）").tag("")
+                            ForEach(voices, id: \.identifier) { voice in
+                                Text("\(voice.name)（\(voice.quality == .premium ? "プレミアム" : voice.quality == .enhanced ? "拡張" : "標準")）").tag(voice.identifier)
+                            }
+                        }
+                        if !voices.contains(where: { $0.quality == .premium || $0.quality == .enhanced }) {
+                            Text("高品質の日本語音声がありません。設定アプリ → アクセシビリティ → 読み上げコンテンツ → 声 → 日本語からダウンロードできます。")
+                                .font(.caption)
+                        }
+                        Stepper("読み上げ速度：\(model.speechSpeed, specifier: "%.1f")倍", value: $model.speechSpeed, in: 0.8...1.2, step: 0.1)
+                    }
+                }.disabled(model.settingsLocked)
                 Section("音声") {
                     Text("他のアプリの音量を一時的に下げてコーチングを再生し、終了後に元の音量へ戻します。")
                     Text("接続中のイヤホンなど、iPhoneで選択されている出力先から再生します。")
