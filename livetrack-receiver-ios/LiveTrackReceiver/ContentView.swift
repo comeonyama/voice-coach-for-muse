@@ -42,6 +42,11 @@ struct ContentView: View {
                                 .font(.subheadline).foregroundStyle(.secondary).padding(.vertical, 12)
                         }
                     }
+                    if let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String,
+                       let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String {
+                        Text("バージョン \(version) (\(build))")
+                            .font(.caption2).foregroundStyle(.secondary)
+                    }
                 }.padding(.horizontal, 22).padding(.vertical, 12)
             }
             .background(background.ignoresSafeArea())
