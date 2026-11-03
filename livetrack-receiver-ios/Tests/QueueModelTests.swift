@@ -47,6 +47,13 @@ import Foundation
         precondition(runs[0].entries.count == 1 && runs[0].entries[0].status == "待機中")
         precondition(runs[1].entries[0].status == "再生済み")
         precondition(HistoryRun.merged(source: source.absoluteString, live: [live], activeSession: "one", archive: nil).count == 1)
+        let script = "https://example.com/macros/s/example/exec"
+        precondition(LiveTrackKick.endpoint(script, key: "") == nil)
+        precondition(LiveTrackKick.endpoint("", key: "test") == nil)
+        let endpoint = LiveTrackKick.endpoint(script + "?key=old", key: "a+b&c")!
+        precondition(endpoint.query == "key=a%2Bb%26c")
+        let midnight = ISO8601DateFormatter().date(from: "2026-11-02T15:00:00Z")!
+        precondition(LiveTrackKick.today(midnight, zone: TimeZone(secondsFromGMT: 32400)!) == "run-2026-11-03")
         print("PASS: relative URLs, invalid schemes, cache query, duplicate prevention, relaunch persistence, failed-item retry, session/source isolation, reset, JSON/date contract")
     }
 }

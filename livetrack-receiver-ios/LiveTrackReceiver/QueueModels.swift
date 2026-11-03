@@ -130,3 +130,31 @@ enum QueueURL {
         return parts.url!
     }
 }
+
+enum LiveTrackKick {
+    struct Reply: Decodable {
+        let ok: Bool
+        let found: Bool?
+    }
+
+    static func endpoint(_ raw: String, key: String) -> URL? {
+        guard !key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              var parts = URLComponents(string: raw.trimmingCharacters(in: .whitespacesAndNewlines)),
+              parts.scheme?.lowercased() == "https", let host = parts.host, !host.isEmpty,
+              parts.user == nil, parts.password == nil, parts.path.hasSuffix("/exec") else { return nil }
+        var items = (parts.queryItems ?? []).filter { $0.name != "key" }
+        items.append(URLQueryItem(name: "key", value: key))
+        parts.queryItems = items
+        parts.percentEncodedQuery = parts.percentEncodedQuery?.replacingOccurrences(of: "+", with: "%2B")
+        parts.fragment = nil
+        return parts.url
+    }
+
+    static func today(_ date: Date = Date(), zone: TimeZone = .current) -> String {
+        let format = DateFormatter()
+        format.locale = Locale(identifier: "en_US_POSIX")
+        format.timeZone = zone
+        format.dateFormat = "yyyy-MM-dd"
+        return "run-" + format.string(from: date)
+    }
+}

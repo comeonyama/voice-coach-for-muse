@@ -84,7 +84,7 @@ struct ContentView: View {
                 if model.running || model.busy { model.stop() }
                 else {
                     model.start()
-                    presentingGuide = model.running && showStartGuide
+                    presentingGuide = model.running && showStartGuide && !model.detectionEnabled
                 }
             } label: {
                 ZStack {
@@ -199,6 +199,21 @@ struct ContentView: View {
                     Stepper("新着なしで自動停止：\(model.timeoutMinutes)分", value: $model.timeoutMinutes, in: 1...1440)
                         .disabled(model.settingsLocked)
                 }
+                Section {
+                    LabeledContent("検知スクリプト URL") {
+                        TextField("https://…/exec", text: $model.detectionURL)
+                            .keyboardType(.URL)
+                    }
+                    LabeledContent("検知スクリプト キー") {
+                        TextField("キー", text: $model.detectionKey)
+                    }
+                } header: {
+                    Text("LiveTrack 開始検知")
+                } footer: {
+                    Text("GAS の /exec URL とキーを両方設定すると、受信開始後に開始メールを自動検知します。")
+                }
+                .textInputAutocapitalization(.never).autocorrectionDisabled()
+                .disabled(model.settingsLocked)
                 Section("案内") {
                     Toggle("開始時の案内を表示", isOn: $showStartGuide)
                 }

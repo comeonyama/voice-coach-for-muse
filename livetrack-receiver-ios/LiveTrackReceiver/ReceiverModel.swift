@@ -8,6 +8,11 @@ final class ReceiverModel: NSObject, ObservableObject {
     static let workerURL = "https://vcm-queue.chibiken.workers.dev"
     static let demoURL = "https://muse-livetrack-receiver-20261101.sunny-moon-4267.chatgpt.site/demo-queue.json"
     @Published var queueURL: String { didSet { defaults.set(queueURL, forKey: "queueURL") } }
+    @Published var detectionURL: String { didSet { defaults.set(detectionURL, forKey: "detectionURL") } }
+    @Published var detectionKey: String { didSet { defaults.set(detectionKey, forKey: "detectionKey") } }
+    var detectionEnabled: Bool { LiveTrackKick.endpoint(detectionURL, key: detectionKey) != nil }
+    private var kickTask: Task<Void, Never>?
+    private var kickStart: ContinuousClock.Instant?
     @Published var interval: Double { didSet { defaults.set(interval, forKey: "interval") } }
     @Published var timeoutMinutes: Int { didSet { defaults.set(timeoutMinutes, forKey: "timeoutMinutes") } }
     private var timeoutTask: Task<Void, Never>?
@@ -81,6 +86,8 @@ final class ReceiverModel: NSObject, ObservableObject {
     init(defaults: UserDefaults) {
         self.defaults = defaults
         queueURL = defaults.string(forKey: "queueURL") ?? Self.workerURL
+        detectionURL = defaults.string(forKey: "detectionURL") ?? ""
+        detectionKey = defaults.string(forKey: "detectionKey") ?? ""
         timeoutMinutes = min(1440, max(1, defaults.object(forKey: "timeoutMinutes") as? Int ?? 30))
         let storedInterval = defaults.double(forKey: "interval")
         interval = storedInterval >= 1 && storedInterval <= 300 ? storedInterval : 5
@@ -128,6 +135,7 @@ final class ReceiverModel: NSObject, ObservableObject {
         armTimeout()
         updateIdleTimer(); updateLocation()
         log("受信開始", "間隔 \(Int(interval))秒")
+        kickStart = detectionEnabled ? .now : nil
         beginPolling(source)
     }
 
@@ -138,12 +146,53 @@ final class ReceiverModel: NSObject, ObservableObject {
             while !Task.isCancelled {
                 guard let self, self.running, self.runToken == token else { return }
                 await self.poll(source, token: token)
+                guard !Task.isCancelled, self.running, self.runToken == token, !self.stoppingForTimeout else { return }
+                self.startKickIfNeeded()
                 do { try await Task.sleep(for: .seconds(self.interval)) } catch { return }
             }
         }
     }
 
+    // Consume the start marker once, after the first queue request has returned.
+    private func startKickIfNeeded() {
+        guard let start = kickStart, let url = LiveTrackKick.endpoint(detectionURL, key: detectionKey) else { return }
+        kickStart = nil
+        let token = runToken
+        kickTask = Task {
+            let clock = ContinuousClock()
+            let end = start.advanced(by: .seconds(1800))
+            var warned = false
+            while !Task.isCancelled, running, token == runToken, clock.now < end {
+                let tick = clock.now
+                if !warned && tick >= start.advanced(by: .seconds(900)) {
+                    warned = true
+                    announce("LiveTrack の開始メールが見つかりません")
+                }
+                do {
+                    let request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 10)
+                    let (data, response) = try await network.data(for: request)
+                    try Task.checkCancellation()
+                    if let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) {
+                        let reply = try JSONDecoder().decode(LiveTrackKick.Reply.self, from: data)
+                        if reply.ok && reply.found == true { return }
+                    }
+                } catch {
+                    // URL errors may contain the request URL and key. Retry silently.
+                    if Task.isCancelled { return }
+                }
+                do { try await clock.sleep(until: min(tick.advanced(by: .seconds(30)), end)) } catch { return }
+            }
+        }
+    }
+
+    private func cancelKick() {
+        kickStart = nil
+        kickTask?.cancel()
+        kickTask = nil
+    }
+
     func stop() {
+        cancelKick()
         timeoutTask?.cancel(); timeoutTask = nil
         finalAnnouncement = nil; stoppingForTimeout = false
         speaker.stopSpeaking(at: .immediate)
@@ -206,6 +255,7 @@ final class ReceiverModel: NSObject, ObservableObject {
                 let a = $0.element.timestamp!, b = $1.element.timestamp!
                 return a == b ? $0.offset < $1.offset : a < b
             }.map(\.element)
+            if (kickStart != nil || kickTask != nil) && queue.session == LiveTrackKick.today() { cancelKick() }
             liveSession = queue.session
             let firstSync = defaults.data(forKey: "played.v1") == nil && !defaults.bool(forKey: "queueSynced")
             var persistPlayed = firstSync
@@ -320,6 +370,7 @@ final class ReceiverModel: NSObject, ObservableObject {
             do { try await Task.sleep(for: .seconds(timeoutMinutes * 60)) } catch { return }
             guard running else { return }
             stoppingForTimeout = true
+            cancelKick()
             pollTask?.cancel()
             suspendPlaybackForRecovery()
             speaker.stopSpeaking(at: .immediate)
