@@ -13,22 +13,6 @@ struct CoachingMessage: Codable {
     }
 }
 
-enum PlaybackRoute { case mp3, speech, skip }
-
-enum PlaybackMode: String, CaseIterable {
-    case automatic = "自動"
-    case device = "オンデバイスTTS"
-    case muse = "Muse TTS"
-
-    func route(for message: CoachingMessage) -> PlaybackRoute {
-        switch self {
-        case .automatic: return message.audio == nil ? .speech : .mp3
-        case .device: return .speech
-        case .muse: return message.audio == nil ? .skip : .mp3
-        }
-    }
-}
-
 struct CoachingQueue: Decodable {
     let session: String
     let messages: [CoachingMessage]

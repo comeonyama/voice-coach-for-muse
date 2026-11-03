@@ -1,5 +1,4 @@
 import SwiftUI
-import AVFoundation
 
 struct ContentView: View {
     @StateObject private var model = ReceiverModel()
@@ -189,25 +188,6 @@ struct ContentView: View {
                         .font(.caption)
                     if model.foregroundOnly { Text("このバージョンはアプリを表示している間のみ利用できます。") }
                 }
-                Section("再生方法") {
-                    Picker("再生方法", selection: $model.mode) {
-                        ForEach(PlaybackMode.allCases, id: \.self) { Text($0.rawValue).tag($0) }
-                    }
-                    if model.mode != .muse {
-                        let voices = model.voices
-                        Picker("日本語の声", selection: $model.voiceID) {
-                            Text("自動（最高品質）").tag("")
-                            ForEach(voices, id: \.identifier) { voice in
-                                Text("\(voice.name)（\(voice.quality == .premium ? "プレミアム" : voice.quality == .enhanced ? "拡張" : "標準")）").tag(voice.identifier)
-                            }
-                        }
-                        if !voices.contains(where: { $0.quality == .premium || $0.quality == .enhanced }) {
-                            Text("高品質の日本語音声がありません。設定アプリ → アクセシビリティ → 読み上げコンテンツ → 声 → 日本語からダウンロードできます。")
-                                .font(.caption)
-                        }
-                        Stepper("読み上げ速度：\(model.speechSpeed, specifier: "%.1f")倍", value: $model.speechSpeed, in: 0.8...1.2, step: 0.1)
-                    }
-                }.disabled(model.settingsLocked)
                 Section {
                     Button("音声テスト", systemImage: "speaker.wave.2") { model.testPlay() }
                         .disabled(model.busy || model.pendingCount > 0)
