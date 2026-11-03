@@ -36,6 +36,17 @@ import Foundation
         precondition(queue.messages[1].audio == nil)
         precondition(queue.messages.allSatisfy { $0.timestamp != nil })
         precondition(queue.messages[0].timestamp! < queue.messages[1].timestamp!)
+        let message = queue.messages[0], stamp = message.timestamp!
+        precondition(!message.isStale(at: stamp.addingTimeInterval(599)))
+        precondition(message.isStale(at: stamp.addingTimeInterval(600)))
+        let archiveJSON = #"{"runs":[{"session":"one","date":"2026-11-01","messages":[{"id":"a","ts":"2026-11-01T10:15:30+09:00","text":"archived"}]},{"session":"older","date":"2026-10-31","messages":[{"id":"a","ts":"2026-10-31T10:00:00+09:00","text":"old"}]}]}"#
+        let archive = try JSONDecoder().decode(HistoryArchive.self, from: Data(archiveJSON.utf8))
+        let live = HistoryEntry(id: MessageKey(source: source.absoluteString, session: "one", id: "a"), message: message, status: "待機中")
+        let runs = HistoryRun.merged(source: source.absoluteString, live: [live], activeSession: "one", archive: archive)
+        precondition(runs.map(\.id) == ["one", "older"])
+        precondition(runs[0].entries.count == 1 && runs[0].entries[0].status == "待機中")
+        precondition(runs[1].entries[0].status == "再生済み")
+        precondition(HistoryRun.merged(source: source.absoluteString, live: [live], activeSession: "one", archive: nil).count == 1)
         print("PASS: relative URLs, invalid schemes, cache query, duplicate prevention, relaunch persistence, failed-item retry, session/source isolation, reset, JSON/date contract")
     }
 }

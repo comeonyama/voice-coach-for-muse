@@ -27,6 +27,27 @@ final class ReceiverModel: NSObject, ObservableObject {
     @Published private(set) var audioStatus = "未使用"
     @Published private(set) var locationStatus = "停止中"
     @Published private(set) var history: [HistoryEntry] = []
+    @Published private var archives = [String: HistoryArchive]()
+    @Published private var liveSession: String?
+    var historyRuns: [HistoryRun] {
+        guard let source = QueueURL.source(queueURL)?.absoluteString else { return [] }
+        return HistoryRun.merged(source: source, live: history, activeSession: liveSession, archive: archives[source])
+    }
+
+    func refreshHistory() async {
+        guard let source = QueueURL.source(queueURL) else { return }
+        let url = source.deletingLastPathComponent().appendingPathComponent("history.json")
+        do {
+            let request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 10)
+            let (data, response) = try await network.data(for: request)
+            try Task.checkCancellation()
+            guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else { return }
+            archives[source.absoluteString] = try JSONDecoder().decode(HistoryArchive.self, from: data)
+        } catch {
+            if !Task.isCancelled { log("履歴取得失敗", error.localizedDescription) }
+        }
+    }
+
     @Published private(set) var logs: [String] = []
     @Published var notice = ""
     var settingsLocked: Bool { running || busy }
@@ -185,12 +206,27 @@ final class ReceiverModel: NSObject, ObservableObject {
                 let a = $0.element.timestamp!, b = $1.element.timestamp!
                 return a == b ? $0.offset < $1.offset : a < b
             }.map(\.element)
+            liveSession = queue.session
+            let firstSync = defaults.data(forKey: "played.v1") == nil && !defaults.bool(forKey: "queueSynced")
+            var persistPlayed = firstSync
+            let now = Date()
             var receivedNew = false
             for message in messages {
                 let key = MessageKey(source: source.absoluteString, session: queue.session, id: message.id)
+                let stale = message.isStale(at: now)
+                let skip = firstSync || (stale && !ledger.seen.contains(key))
+                let newlySkipped = skip && !ledger.played.contains(key)
+                if newlySkipped {
+                    ledger.complete(key)
+                    persistPlayed = true
+                }
                 if !history.contains(where: { $0.id == key }) {
                     receivedNew = true
-                    let status = message.audio == nil ? "音声なし" : (ledger.played.contains(key) ? "再生済み" : "待機中")
+                    let status: String
+                    if firstSync { status = "再生済み" }
+                    else if message.audio == nil { status = "音声なし" }
+                    else if newlySkipped { status = "スキップ（時間経過）" }
+                    else { status = ledger.played.contains(key) ? "再生済み" : "待機中" }
                     history.insert(HistoryEntry(id: key, message: message, status: status), at: 0)
                 }
                 guard let audio = message.audio, ledger.accept(key) else { continue }
@@ -200,6 +236,8 @@ final class ReceiverModel: NSObject, ObservableObject {
                 setStatus(item, "待機中")
                 pending.append(item)
             }
+            if persistPlayed { savePlayed() }
+            if !defaults.bool(forKey: "queueSynced") { defaults.set(true, forKey: "queueSynced") }
             if receivedNew { armTimeout() }
             networkFailures = 0
             if offline {
@@ -235,6 +273,12 @@ final class ReceiverModel: NSObject, ObservableObject {
             }
             while !self.pending.isEmpty, !Task.isCancelled {
                 let item = self.pending.removeFirst()
+                if !item.manualRetry, let key = item.key, item.message.isStale() {
+                    self.ledger.complete(key)
+                    self.savePlayed()
+                    self.setStatus(item, "スキップ（時間経過）")
+                    continue
+                }
                 self.current = item; self.latestText = item.message.text; self.updateCount()
                 self.setStatus(item, "読み込み中")
                 do {
@@ -246,7 +290,7 @@ final class ReceiverModel: NSObject, ObservableObject {
                     self.setStatus(item, "再生済み")
                     if let key = item.key {
                         self.ledger.complete(key)
-                        self.defaults.set(try JSONEncoder().encode(self.ledger.played), forKey: "played.v1")
+                        self.savePlayed()
                     }
                 } catch {
                     if Task.isCancelled { break }
@@ -310,9 +354,13 @@ final class ReceiverModel: NSObject, ObservableObject {
             ledger.complete(key)
             setStatus(item, "スキップ（回線復旧）")
         }
-        defaults.set(try? JSONEncoder().encode(ledger.played), forKey: "played.v1")
+        savePlayed()
         pending = latest.map { [$0] } ?? []
         if let latest { setStatus(latest, "待機中") }
+    }
+
+    private func savePlayed() {
+        defaults.set(try? JSONEncoder().encode(ledger.played), forKey: "played.v1")
     }
 
     func retry(_ entry: HistoryEntry) {
@@ -320,7 +368,7 @@ final class ReceiverModel: NSObject, ObservableObject {
               history.first(where: { $0.id == entry.id })?.status == "再生エラー",
               let source = URL(string: entry.id.source), let audio = entry.message.audio else { return }
         _ = ledger.accept(entry.id)
-        let item = PlaybackItem(message: entry.message, key: entry.id, url: QueueURL.audio(audio, relativeTo: source))
+        let item = PlaybackItem(message: entry.message, key: entry.id, url: QueueURL.audio(audio, relativeTo: source), manualRetry: true)
         setStatus(item, "待機中")
         pending.append(item)
         updateCount(); drain()

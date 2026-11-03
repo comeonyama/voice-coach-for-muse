@@ -11,10 +11,6 @@ struct ContentView: View {
     private let green = Color(red: 0.02, green: 0.45, blue: 0.24)
     private let background = LinearGradient(colors: [Color(red: 0.84, green: 0.90, blue: 0.96), .white],
                                             startPoint: .top, endPoint: .bottom)
-    private var entries: [HistoryEntry] {
-        model.history.sorted { ($0.message.timestamp ?? .distantPast) > ($1.message.timestamp ?? .distantPast) }
-    }
-
     var body: some View {
         NavigationStack {
             ScrollView {
@@ -35,8 +31,10 @@ struct ContentView: View {
                             Spacer()
                             NavigationLink("すべて見る") { historyScreen }
                         }
-                        ForEach(Array(entries.prefix(3))) { entry in historyRow(entry) }
-                        if model.history.isEmpty {
+                        if let latest = model.historyRuns.first {
+                            runHeading(latest)
+                            ForEach(Array(latest.entries.prefix(3))) { entry in historyRow(entry) }
+                        } else {
                             Text("届いたコーチングがここに残ります。")
                                 .font(.subheadline).foregroundStyle(.secondary).padding(.vertical, 12)
                         }
@@ -70,6 +68,13 @@ struct ContentView: View {
         }
         .tint(accent)
         .preferredColorScheme(.light)
+        .task(id: "\(model.queueURL)|\(showSettings)|\(phase == .active)") {
+            guard !showSettings, phase == .active else { return }
+            while !Task.isCancelled {
+                await model.refreshHistory()
+                do { try await Task.sleep(for: .seconds(60)) } catch { return }
+            }
+        }
         .onChange(of: phase) { _, new in model.sceneChanged(new) }
     }
 
@@ -128,15 +133,25 @@ struct ContentView: View {
         .shadow(color: .black.opacity(0.09), radius: 8, y: 4)
     }
 
+    private func runHeading(_ run: HistoryRun) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(run.date).font(.subheadline.bold())
+            Text(run.id).font(.caption).foregroundStyle(.secondary)
+        }.accessibilityElement(children: .combine)
+    }
+
     private var historyScreen: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 20) {
-                if entries.isEmpty { Text("まだコーチングはありません。").foregroundStyle(.secondary) }
-                ForEach(entries) { entry in historyRow(entry) }
+                if model.historyRuns.isEmpty { Text("まだコーチングはありません。").foregroundStyle(.secondary) }
+                ForEach(model.historyRuns) { run in
+                    runHeading(run)
+                    ForEach(run.entries) { entry in historyRow(entry) }
+                }
                 if !model.history.isEmpty {
                     Button("再生済みの記録をリセット", role: .destructive) { confirmReset = true }
                         .disabled(model.busy || model.pendingCount > 0)
-                    Text("履歴はアプリを開いている間の受信内容です。再生済みの記録は次回起動後も保持されます。")
+                    Text("過去ランの履歴は配信先から取得します。リセットは端末の再生済み記録に適用されます。")
                         .font(.caption).foregroundStyle(.secondary)
                 }
             }.padding(24)
@@ -146,7 +161,7 @@ struct ContentView: View {
             Button("リセットする", role: .destructive) { model.resetPlayed() }
             Button("キャンセル", role: .cancel) { }
         } message: {
-            Text("すべてのランの記録を消去します。接続先に残っている音声は、次の受信時に再び再生されます。")
+            Text("すべてのランの記録を消去します。直近10分の音声は、次の受信時に再び再生されることがあります。")
         }
     }
 
