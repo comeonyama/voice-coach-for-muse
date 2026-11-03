@@ -103,19 +103,22 @@ struct ContentView: View {
 
     private func historyRow(_ entry: HistoryEntry) -> some View {
         let waiting = entry.status == "待機中"
+        let failed = entry.status == "再生エラー"
         let played = entry.status == "再生済み"
         let card = RoundedRectangle(cornerRadius: 18)
         return VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 4) {
+                if failed { Image(systemName: "exclamationmark.circle.fill") }
                 if played { Image(systemName: "checkmark.circle.fill") }
                 Text(entry.status)
             }
             .font(.caption.weight(.semibold))
             .padding(.horizontal, 9).padding(.vertical, 4)
-            .foregroundStyle(waiting ? .white : played ? green : .secondary)
-            .background(waiting ? accent : played ? green.opacity(0.12) : Color.gray.opacity(0.12), in: Capsule())
+            .foregroundStyle(waiting ? .white : failed ? .red : played ? green : .secondary)
+            .background(waiting ? accent : failed ? Color.red.opacity(0.1) : played ? green.opacity(0.12) : Color.gray.opacity(0.12), in: Capsule())
             .frame(maxWidth: .infinity, alignment: .trailing)
             Text(entry.message.text).font(.headline)
+            if failed { Button("再試行", systemImage: "arrow.clockwise") { model.retry(entry) } }
             Text(entry.message.timestamp?.formatted(date: .abbreviated, time: .shortened) ?? "時刻不明")
                 .font(.caption).foregroundStyle(.secondary)
         }
@@ -176,6 +179,10 @@ struct ContentView: View {
                         .font(.caption)
                     Text("サンプルでは3件の短い確認音を受信できます。設定済みの接続先URLは置き換わります。")
                         .font(.caption).foregroundStyle(.secondary)
+                }
+                Section("受信タイムアウト") {
+                    Stepper("新着なしで自動停止：\(model.timeoutMinutes)分", value: $model.timeoutMinutes, in: 1...1440)
+                        .disabled(model.settingsLocked)
                 }
                 Section("案内") {
                     Toggle("開始時の案内を表示", isOn: $showStartGuide)

@@ -9,6 +9,13 @@ final class ReceiverModel: NSObject, ObservableObject {
     static let demoURL = "https://muse-livetrack-receiver-20261101.sunny-moon-4267.chatgpt.site/demo-queue.json"
     @Published var queueURL: String { didSet { defaults.set(queueURL, forKey: "queueURL") } }
     @Published var interval: Double { didSet { defaults.set(interval, forKey: "interval") } }
+    @Published var timeoutMinutes: Int { didSet { defaults.set(timeoutMinutes, forKey: "timeoutMinutes") } }
+    private var timeoutTask: Task<Void, Never>?
+    private var stoppingForTimeout = false
+    private let speaker = AVSpeechSynthesizer()
+    private var finalAnnouncement: AVSpeechUtterance?
+    private var offline = false
+    private var networkFailures = 0
     @Published var preventLock: Bool { didSet { defaults.set(preventLock, forKey: "preventLock"); updateIdleTimer() } }
     @Published var useLocation: Bool { didSet { defaults.set(useLocation, forKey: "useLocation"); updateLocation() } }
     @Published private(set) var running = false
@@ -53,6 +60,7 @@ final class ReceiverModel: NSObject, ObservableObject {
     init(defaults: UserDefaults) {
         self.defaults = defaults
         queueURL = defaults.string(forKey: "queueURL") ?? Self.workerURL
+        timeoutMinutes = min(1440, max(1, defaults.object(forKey: "timeoutMinutes") as? Int ?? 30))
         let storedInterval = defaults.double(forKey: "interval")
         interval = storedInterval >= 1 && storedInterval <= 300 ? storedInterval : 5
         preventLock = defaults.object(forKey: "preventLock") as? Bool ?? true
@@ -67,6 +75,9 @@ final class ReceiverModel: NSObject, ObservableObject {
         configuration.timeoutIntervalForResource = 10
         configuration.waitsForConnectivity = false
         network = URLSession(configuration: configuration)
+        speaker.delegate = self
+        speaker.usesApplicationAudioSession = false
+        logs = defaults.stringArray(forKey: "playbackDiagnostics") ?? []
         location.delegate = self
         location.activityType = .fitness
         location.desiredAccuracy = kCLLocationAccuracyHundredMeters
@@ -92,9 +103,16 @@ final class ReceiverModel: NSObject, ObservableObject {
         lastPoll = nil
         ledger.resetAttempts()
         runToken = UUID()
-        let token = runToken
+        offline = false; networkFailures = 0
+        armTimeout()
         updateIdleTimer(); updateLocation()
         log("受信開始", "間隔 \(Int(interval))秒")
+        beginPolling(source)
+    }
+
+    private func beginPolling(_ source: URL) {
+        pollTask?.cancel()
+        let token = runToken
         pollTask = Task { [weak self] in
             while !Task.isCancelled {
                 guard let self, self.running, self.runToken == token else { return }
@@ -105,12 +123,17 @@ final class ReceiverModel: NSObject, ObservableObject {
     }
 
     func stop() {
+        timeoutTask?.cancel(); timeoutTask = nil
+        finalAnnouncement = nil; stoppingForTimeout = false
+        speaker.stopSpeaking(at: .immediate)
+        offline = false
         running = false; runToken = UUID()
         pollTask?.cancel(); pollTask = nil
         playbackTask?.cancel()
         player?.stop()
         if let current { setStatus(current, "停止（未完了）") }
         resolvePlayback(false)
+        for item in pending { setStatus(item, "停止（未完了）") }
         pending.removeAll()
         paused = false; resumeAllowed = true
         releaseAudio()
@@ -119,7 +142,7 @@ final class ReceiverModel: NSObject, ObservableObject {
     }
 
     func testPlay() {
-        guard !busy, pending.isEmpty, !interruptionActive else {
+        guard !busy, pending.isEmpty, !interruptionActive, !offline, !stoppingForTimeout else {
             notice = "音声の再生や一時停止が終わってからお試しください。"; return
         }
         guard let url = Bundle.main.url(forResource: "test-coaching", withExtension: "mp3") ?? Bundle.main.url(forResource: "test-tone", withExtension: "mp3") else {
@@ -162,33 +185,53 @@ final class ReceiverModel: NSObject, ObservableObject {
                 let a = $0.element.timestamp!, b = $1.element.timestamp!
                 return a == b ? $0.offset < $1.offset : a < b
             }.map(\.element)
+            var receivedNew = false
             for message in messages {
                 let key = MessageKey(source: source.absoluteString, session: queue.session, id: message.id)
                 if !history.contains(where: { $0.id == key }) {
+                    receivedNew = true
                     let status = message.audio == nil ? "音声なし" : (ledger.played.contains(key) ? "再生済み" : "待機中")
                     history.insert(HistoryEntry(id: key, message: message, status: status), at: 0)
                 }
                 guard let audio = message.audio, ledger.accept(key) else { continue }
                 log("新規メッセージ検出", message.id)
                 if current == nil { latestText = message.text }
-                pending.append(PlaybackItem(message: message, key: key, url: QueueURL.audio(audio, relativeTo: source)))
+                let item = PlaybackItem(message: message, key: key, url: QueueURL.audio(audio, relativeTo: source))
+                setStatus(item, "待機中")
+                pending.append(item)
+            }
+            if receivedNew { armTimeout() }
+            networkFailures = 0
+            if offline {
+                offline = false
+                recoverBacklog(source: source, session: queue.session)
+                announce("回線が復旧しました")
             }
             if current == nil, pending.isEmpty, let last = messages.last { latestText = last.text }
             lastPoll = Date(); log("ポーリング成功", "\(queue.session) / \(messages.count)件")
             updateCount(); drain()
         } catch {
-            if !Task.isCancelled, token == runToken { log("ポーリング失敗", error.localizedDescription) }
+            guard !Task.isCancelled, token == runToken, !stoppingForTimeout else { return }
+            log("ポーリング失敗", error.localizedDescription)
+            if error is URLError {
+                networkFailures += 1
+                if !offline && networkFailures >= 2 {
+                    offline = true
+                    suspendPlaybackForRecovery()
+                    announce("回線がつながっていません")
+                }
+            } else { networkFailures = 0 }
         }
     }
 
     private func drain() {
-        guard playbackTask == nil, !pending.isEmpty, !paused, !interruptionActive else { return }
+        guard !offline, !stoppingForTimeout, playbackTask == nil, !pending.isEmpty, !paused, !interruptionActive else { return }
         busy = true
         playbackTask = Task { [weak self] in
             guard let self else { return }
             defer {
                 self.player = nil; self.current = nil
-                self.releaseAudio(); self.busy = false; self.playbackTask = nil; self.updateCount()
+                self.releaseAudio(); self.busy = false; self.playbackTask = nil; self.updateCount(); self.drain()
             }
             while !self.pending.isEmpty, !Task.isCancelled {
                 let item = self.pending.removeFirst()
@@ -196,21 +239,19 @@ final class ReceiverModel: NSObject, ObservableObject {
                 self.setStatus(item, "読み込み中")
                 do {
                     let began = Date()
-                    let success = try await self.playMP3(item)
+                    try await self.playWithRecovery(item)
                     try Task.checkCancellation()
                     let elapsed = String(format: "%.2f", Date().timeIntervalSince(began))
-                    if success {
-                        self.log("再生終了", "\(item.message.id) / \(elapsed)秒（割り込み待ち含む）")
-                        self.setStatus(item, "再生済み")
-                        if let key = item.key {
-                            self.ledger.complete(key)
-                            self.defaults.set(try JSONEncoder().encode(self.ledger.played), forKey: "played.v1")
-                        }
-                    } else { throw ReceiverError.message("再生が正常終了しませんでした / \(elapsed)秒") }
+                    self.log("再生終了", "\(item.message.id) / \(elapsed)秒（割り込み待ち含む）")
+                    self.setStatus(item, "再生済み")
+                    if let key = item.key {
+                        self.ledger.complete(key)
+                        self.defaults.set(try JSONEncoder().encode(self.ledger.played), forKey: "played.v1")
+                    }
                 } catch {
                     if Task.isCancelled { break }
                     self.log("再生エラー", "\(item.message.id): \(error.localizedDescription)")
-                    self.setStatus(item, "スキップ（再生エラー）")
+                    self.setStatus(item, "再生エラー")
                     self.player?.stop(); self.releaseAudio()
                 }
                 self.player = nil; self.current = nil; self.updateCount()
@@ -221,12 +262,111 @@ final class ReceiverModel: NSObject, ObservableObject {
         }
     }
 
+    private func announce(_ text: String) {
+        log("システム通知", text)
+        let speech = AVSpeechUtterance(string: text)
+        speech.voice = AVSpeechSynthesisVoice(language: "ja-JP")
+        if stoppingForTimeout { finalAnnouncement = speech }
+        speaker.speak(speech)
+    }
+
+    private func armTimeout() {
+        timeoutTask?.cancel()
+        timeoutTask = Task {
+            do { try await Task.sleep(for: .seconds(timeoutMinutes * 60)) } catch { return }
+            guard running else { return }
+            stoppingForTimeout = true
+            pollTask?.cancel()
+            suspendPlaybackForRecovery()
+            speaker.stopSpeaking(at: .immediate)
+            announce("\(timeoutMinutes)分間、Muse からの音声が届いていないので受信を停止します")
+            // If the OS cannot finish the announcement, still honor automatic stop.
+            do { try await Task.sleep(for: .seconds(20)) } catch { return }
+            stop()
+        }
+    }
+
+    private func suspendPlaybackForRecovery() {
+        playbackTask?.cancel()
+        if let item = current, let key = item.key, !ledger.played.contains(key) {
+            pending.insert(item, at: 0)
+            setStatus(item, "待機中")
+        }
+        player?.stop()
+        resolvePlayback(false)
+        releaseAudio()
+    }
+
+    private func recoverBacklog(source: URL, session: String) {
+        for entry in history where entry.id.source == source.absoluteString && entry.id.session == session && entry.status == "再生エラー" {
+            if let audio = entry.message.audio {
+                pending.append(PlaybackItem(message: entry.message, key: entry.id, url: QueueURL.audio(audio, relativeTo: source)))
+            }
+        }
+        let latest = pending.filter { $0.key?.session == session && $0.key?.source == source.absoluteString }
+            .sorted { ($0.message.timestamp ?? .distantPast) < ($1.message.timestamp ?? .distantPast) }.last
+        for item in pending where item.id != latest?.id {
+            guard let key = item.key else { continue }
+            ledger.complete(key)
+            setStatus(item, "スキップ（回線復旧）")
+        }
+        defaults.set(try? JSONEncoder().encode(ledger.played), forKey: "played.v1")
+        pending = latest.map { [$0] } ?? []
+        if let latest { setStatus(latest, "待機中") }
+    }
+
+    func retry(_ entry: HistoryEntry) {
+        guard !offline, !stoppingForTimeout,
+              history.first(where: { $0.id == entry.id })?.status == "再生エラー",
+              let source = URL(string: entry.id.source), let audio = entry.message.audio else { return }
+        _ = ledger.accept(entry.id)
+        let item = PlaybackItem(message: entry.message, key: entry.id, url: QueueURL.audio(audio, relativeTo: source))
+        setStatus(item, "待機中")
+        pending.append(item)
+        updateCount(); drain()
+    }
+
+    private func playWithRecovery(_ item: PlaybackItem) async throws {
+        let delays = [1, 3, 5]
+        for attempt in 0...4 {
+            try Task.checkCancellation()
+            do {
+                if try await playMP3(item) { return }
+                throw ReceiverError.message("プレイヤーが正常終了しませんでした")
+            } catch {
+                try Task.checkCancellation()
+                let reason = error as NSError
+                log("音声再生失敗", "\(item.key?.session ?? "test") / \(item.message.id) / 試行\(attempt + 1) / \(reason.domain) \(reason.code) / \(reason.localizedDescription)")
+                var diagnostics = defaults.stringArray(forKey: "playbackDiagnostics") ?? []
+                if let last = logs.last { diagnostics.append(last) }
+                defaults.set(Array(diagnostics.suffix(100)), forKey: "playbackDiagnostics")
+                player?.stop(); player = nil; releaseAudio()
+                guard !item.isTest, attempt < 4 else { throw error }
+                if attempt < delays.count {
+                    setStatus(item, "再試行中")
+                    try await Task.sleep(for: .seconds(delays[attempt]))
+                } else {
+                    do {
+                        try session.setCategory(.playback, mode: .spokenAudio, options: [.duckOthers])
+                    } catch { log("Audio Session 再設定失敗", error.localizedDescription) }
+                    announce("再生エラーが発生しました。再初期化します")
+                    if running, let source = QueueURL.source(queueURL) {
+                        lastPoll = nil
+                        beginPolling(source)
+                    }
+                    // playMP3 creates a fresh player and reactivates the session.
+                }
+            }
+        }
+    }
+
     private func playMP3(_ item: PlaybackItem) async throws -> Bool {
         guard let url = item.url else { throw ReceiverError.message("音声URLが不正です") }
         let data: Data
         if url.isFileURL { data = try Data(contentsOf: url) }
         else {
-            let request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 5)
+            var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 5)
+            request.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
             let (download, response) = try await self.network.data(for: request)
             guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
                 throw ReceiverError.message("音声HTTP \((response as? HTTPURLResponse)?.statusCode ?? 0)")
@@ -234,7 +374,7 @@ final class ReceiverModel: NSObject, ObservableObject {
             data = download
         }
         try Task.checkCancellation()
-        while self.paused || self.interruptionActive { try await Task.sleep(for: .milliseconds(200)) }
+        while self.paused || self.interruptionActive || self.speaker.isSpeaking { try await Task.sleep(for: .milliseconds(200)) }
         let audio = try AVAudioPlayer(data: data)
         audio.delegate = self
         guard audio.prepareToPlay() else { throw ReceiverError.message("prepareToPlay失敗") }
@@ -312,7 +452,10 @@ final class ReceiverModel: NSObject, ObservableObject {
         })
         observers.append(center.addObserver(forName: AVAudioSession.mediaServicesWereResetNotification, object: nil, queue: .main) { [weak self] _ in
             Task { @MainActor [weak self] in
-                self?.stop(); self?.log("Audio Services リセット", "再度開始してください")
+                guard let self else { return }
+                self.sessionActive = false
+                self.resolvePlayback(false)
+                self.log("Audio Services リセット", "次の再生でセッションを再設定")
             }
         })
     }
@@ -363,6 +506,14 @@ final class ReceiverModel: NSObject, ObservableObject {
         default:
             location.stopUpdatingLocation(); location.allowsBackgroundLocationUpdates = false
             locationStatus = "許可なし · 前景で利用してください"
+        }
+    }
+}
+
+extension ReceiverModel: AVSpeechSynthesizerDelegate {
+    nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
+        Task { @MainActor in
+            if self.finalAnnouncement === utterance { self.stop() }
         }
     }
 }
