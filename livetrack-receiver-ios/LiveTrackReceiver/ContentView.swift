@@ -200,13 +200,10 @@ struct ContentView: View {
                         .disabled(model.settingsLocked)
                 }
                 Section {
-                    LabeledContent("検知スクリプト URL") {
-                        TextField("https://…/exec", text: $model.detectionURL)
-                            .keyboardType(.URL)
-                    }
-                    LabeledContent("検知スクリプト キー") {
-                        TextField("キー", text: $model.detectionKey)
-                    }
+                    DetectionField("検知スクリプト URL", prompt: "https://…/exec", value: model.detectionURL,
+                                   keyboard: .URL) { model.detectionURL = $0 }
+                    DetectionField("検知スクリプト キー", prompt: "キー", value: model.detectionKey,
+                                   keyboard: .asciiCapable) { model.detectionKey = $0 }
                 } header: {
                     Text("LiveTrack 開始検知")
                 } footer: {
@@ -246,5 +243,55 @@ struct ContentView: View {
             .navigationTitle("設定")
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("完了") { showSettings = false } } }
         }.tint(accent)
+    }
+}
+
+private struct DetectionField: View {
+    let title: String
+    let prompt: String
+    let keyboard: UIKeyboardType
+    let save: (String) -> Void
+    @State private var text: String
+    @FocusState private var focused: Bool
+
+    init(_ title: String, prompt: String, value: String, keyboard: UIKeyboardType,
+         save: @escaping (String) -> Void) {
+        self.title = title
+        self.prompt = prompt
+        self.keyboard = keyboard
+        self.save = save
+        _text = State(initialValue: value)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Text(title).font(.subheadline)
+                    .onTapGesture { focused = true }
+                Spacer()
+                Button {
+                    UIPasteboard.general.string = text
+                } label: {
+                    Image(systemName: "doc.on.doc").frame(width: 44, height: 44)
+                }
+                .buttonStyle(.borderless).disabled(text.isEmpty)
+                .accessibilityLabel("\(title)をコピー")
+                PasteButton(payloadType: String.self) { values in
+                    if let value = values.first { text = value }
+                }
+                .labelStyle(.iconOnly)
+                .accessibilityLabel("\(title)にペースト")
+            }
+            TextField(prompt, text: $text)
+                .accessibilityLabel(title)
+                .keyboardType(keyboard)
+                .focused($focused)
+                .padding(.horizontal, 10)
+                .frame(maxWidth: .infinity, minHeight: 44)
+                .background(Color(uiColor: .tertiarySystemFill), in: RoundedRectangle(cornerRadius: 8))
+                .contentShape(Rectangle())
+                .simultaneousGesture(TapGesture().onEnded { focused = true })
+        }
+        .onChange(of: text) { _, value in save(value) }
     }
 }

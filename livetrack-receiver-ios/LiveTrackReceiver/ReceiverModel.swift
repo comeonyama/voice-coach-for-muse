@@ -8,8 +8,8 @@ final class ReceiverModel: NSObject, ObservableObject {
     static let workerURL = "https://vcm-queue.chibiken.workers.dev"
     static let demoURL = "https://muse-livetrack-receiver-20261101.sunny-moon-4267.chatgpt.site/demo-queue.json"
     @Published var queueURL: String { didSet { defaults.set(queueURL, forKey: "queueURL") } }
-    @Published var detectionURL: String { didSet { defaults.set(detectionURL, forKey: "detectionURL") } }
-    @Published var detectionKey: String { didSet { defaults.set(detectionKey, forKey: "detectionKey") } }
+    var detectionURL: String { didSet { defaults.set(detectionURL, forKey: "detectionURL") } }
+    var detectionKey: String { didSet { defaults.set(detectionKey, forKey: "detectionKey") } }
     var detectionEnabled: Bool { LiveTrackKick.endpoint(detectionURL, key: detectionKey) != nil }
     private var kickTask: Task<Void, Never>?
     private var kickStart: ContinuousClock.Instant?
