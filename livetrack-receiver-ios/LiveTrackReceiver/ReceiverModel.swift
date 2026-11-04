@@ -179,6 +179,8 @@ final class ReceiverModel: NSObject, ObservableObject {
         log("受信開始", "間隔 \(Int(interval))秒")
         if !resuming { startRequest = detectionEnabled ? StartRequest() : nil }
         monitoring = false
+        log("開始検知", startRequest == nil ? "無効：検知URLまたはキーが未設定・不正" : "状態：\(startRequest!.phase)、経過\(Int(Date().timeIntervalSince(startRequest!.since)))秒")
+        startKickIfNeeded()
         beginPolling(source)
     }
 
@@ -209,6 +211,7 @@ final class ReceiverModel: NSObject, ObservableObject {
             guard status.start_id == requestID else { return }
             monitoring = status.state == "monitoring"
             if monitoring {
+                if startRequest?.phase != "monitoring" { log("開始検知", "監視起動を確認・キック終了") }
                 startRequest?.phase = "monitoring"
                 cancelKick()
             } else if status.state == "closed" { startRequest?.phase = "closed" }
@@ -223,21 +226,29 @@ final class ReceiverModel: NSObject, ObservableObject {
         kickTask = Task {
             while !Task.isCancelled, running, token == runToken, startRequest?.id == start.id {
                 let elapsed = Date().timeIntervalSince(start.since)
-                if elapsed >= 1800 { startRequest?.phase = "expired"; return }
+                if elapsed >= 1800 { log("開始検知", "30分経過・キック終了"); startRequest?.phase = "expired"; return }
                 if elapsed >= 900 && startRequest?.warned == false {
                     startRequest?.warned = true
                     announce("LiveTrack の開始メールが見つかりません")
                 }
                 do {
+                    log("開始検知", "GASへキック送信")
                     let request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 10)
                     let (data, response) = try await network.data(for: request)
                     try Task.checkCancellation()
                     guard running, token == runToken, startRequest?.id == start.id else { return }
                     if let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) {
                         let reply = try JSONDecoder().decode(LiveTrackKick.Reply.self, from: data)
-                        if reply.ok && reply.found == true { startRequest?.phase = "detected"; return }
+                        log("開始検知", "応答 ok=\(reply.ok)、found=\(reply.found == true)")
+                        if reply.ok && reply.found == true { log("開始検知", "メール検知・キック終了、監視起動待ち"); startRequest?.phase = "detected"; return }
+                    } else if let http = response as? HTTPURLResponse {
+                        log("開始検知", "HTTP \(http.statusCode)、次回再試行")
                     }
-                } catch { if Task.isCancelled { return } }
+                } catch {
+                    if Task.isCancelled { return }
+                    let failure = error as NSError
+                    log("開始検知", "通信・応答エラー domain=\(failure.domain) code=\(failure.code)、次回再試行")
+                }
                 do { try await Task.sleep(for: .seconds(min(30, max(0, 1800 - Date().timeIntervalSince(start.since))))) } catch { return }
             }
         }

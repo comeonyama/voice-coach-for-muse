@@ -55,9 +55,9 @@ GAS のスクリプトプロパティは `KICK_SECRET`、`UPLOAD_TOKEN`、
 
 ### アプリ開始IDによる検知（新方式）
 
-操作順は「アプリで開始 → 時計でアクティビティ開始」。アプリはUUIDのsidと
+操作順は「アプリで開始 → 時計でアクティビティ開始」。アプリはUUIDのstart_idと
 UTCのsinceを保持してキックし、GASはsinceの120秒前以降・30分以内の未処理
-メールだけを候補とする。キー・sid・sinceがない要求に旧方式の救済はしない。
+メールだけを候補とする。キー・start_id・sinceがない要求に旧方式の救済はしない。
 当日queue名は監視開始の証拠にしない。GASの検知後、VMがstart_id付きの
 監視を起動した時点で公開start-statusをmonitoring、終了を観測したらclosedにする。
 公開するのはstart_id / state / atだけ。session.jsonは引き続き非公開。

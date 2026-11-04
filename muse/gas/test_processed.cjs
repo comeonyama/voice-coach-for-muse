@@ -1,5 +1,5 @@
 const fs = require('node:fs'), vm = require('node:vm'), assert = require('node:assert/strict');
-const sid='bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb';
+const start_id='bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb';
 const since=()=>new Date().toISOString();
 function fixture(properties = {}) {
   const p = {WORKER_BASE:'https://fixture.workers.dev', KICK_SECRET:'fixture', ...properties};
@@ -18,23 +18,23 @@ function fixture(properties = {}) {
 function mail(id,age=1) {return {getId:()=>id,getDate:()=>new Date(Date.now()-age*60000),getBody:()=> 'https://livetrack.garmin.com/session/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa/token/abcdef'};}
 {
  const {p,state,c}=fixture({LAST_MAIL_ID:'old'});state.messages=[mail('old')];
- assert.equal(c.findAndPost_(sid,since()).found,false);assert.deepEqual(JSON.parse(p.PROCESSED_MAIL_IDS),['old']);assert.equal(state.posts,0);
+ assert.equal(c.findAndPost_(start_id,since()).found,false);assert.deepEqual(JSON.parse(p.PROCESSED_MAIL_IDS),['old']);assert.equal(state.posts,0);
  state.messages=[mail('old',0),mail('older',10),mail('new',1)];
- assert.equal(c.findAndPost_(sid,since()).found,true);assert.equal(p.LAST_MAIL_ID,'new');
- state.messages=[mail('old'),mail('new')];assert.equal(c.findAndPost_(sid,since()).already,true);assert.equal(state.posts,1);
+ assert.equal(c.findAndPost_(start_id,since()).found,true);assert.equal(p.LAST_MAIL_ID,'new');
+ state.messages=[mail('old'),mail('new')];assert.equal(c.findAndPost_(start_id,since()).already,true);assert.equal(state.posts,1);
 }
 {
  const {p,state,c}=fixture({PROCESSED_MAIL_IDS:JSON.stringify(Array.from({length:20},(_,i)=>'id'+i))});
- state.messages=[mail('next')];state.status=500;assert.equal(c.findAndPost_(sid,since()).found,false);assert.equal(JSON.parse(p.PROCESSED_MAIL_IDS).length,20);assert.equal(p.LAST_MAIL_ID,undefined);
- state.status=200;assert.equal(c.findAndPost_(sid,since()).found,true);const ids=JSON.parse(p.PROCESSED_MAIL_IDS);assert.equal(ids.length,20);assert.equal(ids[0],'id1');assert.equal(ids[19],'next');
+ state.messages=[mail('next')];state.status=500;assert.equal(c.findAndPost_(start_id,since()).found,false);assert.equal(JSON.parse(p.PROCESSED_MAIL_IDS).length,20);assert.equal(p.LAST_MAIL_ID,undefined);
+ state.status=200;assert.equal(c.findAndPost_(start_id,since()).found,true);const ids=JSON.parse(p.PROCESSED_MAIL_IDS);assert.equal(ids.length,20);assert.equal(ids[0],'id1');assert.equal(ids[19],'next');
 }
 {
- const {state,c}=fixture();state.messages=[mail('stale',31)];assert.equal(c.findAndPost_(sid,since()).found,false);assert.equal(state.posts,0);
- state.messages=Array.from({length:101},(_,i)=>mail('m'+i,i===100?1:31));assert.equal(c.findAndPost_(sid,since()).found,true);assert.ok(state.pages>=3);
+ const {state,c}=fixture();state.messages=[mail('stale',31)];assert.equal(c.findAndPost_(start_id,since()).found,false);assert.equal(state.posts,0);
+ state.messages=Array.from({length:101},(_,i)=>mail('m'+i,i===100?1:31));assert.equal(c.findAndPost_(start_id,since()).found,true);assert.ok(state.pages>=3);
 }
 {
- const {p,state,c}=fixture({PROCESSED_MAIL_IDS:'invalid'});assert.equal(c.doGet({parameter:{key:'fixture',sid,since:since()}}).ok,false);assert.equal(state.posts,0);
- delete p.WORKER_BASE;assert.match(c.doGet({parameter:{key:'fixture',sid,since:since()}}).error,/WORKER_BASE is not set/);
+ const {p,state,c}=fixture({PROCESSED_MAIL_IDS:'invalid'});assert.equal(c.doGet({parameter:{key:'fixture',start_id,since:since()}}).ok,false);assert.equal(state.posts,0);
+ delete p.WORKER_BASE;assert.match(c.doGet({parameter:{key:'fixture',start_id,since:since()}}).error,/WORKER_BASE is not set/);
  assert.equal(c.doGet({parameter:{key:'wrong'}}).error,'unauthorized');
 }
 console.log('PASS migration, newest unprocessed, deduplication, 20-ID cap, retry, freshness, pagination, config/auth');
@@ -42,10 +42,18 @@ console.log('PASS migration, newest unprocessed, deduplication, 20-ID cap, retry
 {
  const {state,c}=fixture();state.messages=[mail('old',12)];
  assert.equal(c.doGet({parameter:{key:'fixture'}}).ok,false);
- assert.equal(c.doGet({parameter:{key:'fixture',sid}}).ok,false);
+ assert.equal(c.doGet({parameter:{key:'fixture',start_id}}).ok,false);
  assert.equal(c.doGet({parameter:{key:'fixture',since:since()}}).ok,false);
- assert.equal(c.findAndPost_(sid,since()).found,false);assert.equal(state.posts,0);
- state.messages=[mail('fresh',0)];assert.equal(c.findAndPost_(sid,since()).found,true);
- assert.equal(c.findAndPost_(sid,since()).already,true);assert.equal(state.posts,1);
+ assert.equal(c.findAndPost_(start_id,since()).found,false);assert.equal(state.posts,0);
+ state.messages=[mail('fresh',0)];assert.equal(c.findAndPost_(start_id,since()).found,true);
+ assert.equal(c.findAndPost_(start_id,since()).already,true);assert.equal(state.posts,1);
 }
-console.log('PASS required sid/since, start-time gate, same-start idempotency');
+console.log('PASS required start_id/since, start-time gate, same-start idempotency');
+{
+ const {state,c}=fixture();state.messages=[mail('fresh',0)];
+ const old=c.doGet({parameter:{key:'fixture',sid:start_id,since:since()}});
+ assert.equal(old.ok,false);assert.equal(state.posts,0);
+ const reply=c.doGet({parameter:{key:'fixture',start_id,since:since()}});
+ assert.equal(reply.ok,true);assert.equal(reply.found,true);assert.equal(state.posts,1);
+}
+console.log('PASS doGet accepts start_id and rejects legacy sid');

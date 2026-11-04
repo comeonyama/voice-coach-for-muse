@@ -36,11 +36,11 @@ iOS アプリからのキックで起動するのが本線。Muse は検知の�
 ## アプリ開始を基準にする契約
 
 通常操作は「アプリでコーチング開始 → 時計でアクティビティ開始」。
-キックは `key` に加え、UUIDの `sid` とISO 8601 UTCの `since` が必須。
+キックは `key` に加え、UUIDの `start_id` とISO 8601 UTCの `since` が必須。
 欠落・不正な要求は `ok:false` とし、旧方式には戻さない。
 メールは `since - 120秒` 以降かつ受信から30分以内の未処理候補に限定する。
 120秒は時計ずれの許容であり、この範囲内の開始前メールは候補になり得る。
-同じsidの投稿成功後は `found:true, already:true` を返して再投稿しない。
+同じstart_idの投稿成功後は `found:true, already:true` を返して再投稿しない。
 `LAST_START_ID` / `LAST_START_SESSION_ID` は自動管理する対応情報。
 Workerには `start_id` を追加して渡す。
 
@@ -86,3 +86,6 @@ Workerには `start_id` を追加して渡す。
   それが候補になるため、この方式だけでは検索反映遅延による誤選択を完全には防げない。
 - 応答は JSON: 検知時 {ok:true, found:true, session_id},
   未検知 {ok:true, found:false}。トークンは応答に含めない。
+
+開始IDのパラメータ名は `start_id`。`sid` はGAS予約名のため送信しない。
+この名称修正も既存デプロイの「新しいバージョン」で反映すること。

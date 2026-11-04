@@ -49,10 +49,10 @@ function doGet(e) {
   }
   try {
     workerBase_(); // メールの有無や処理済み判定に関係なく設定漏れを通知する
-    return jsonOut_(findAndPost_(e.parameter.sid, e.parameter.since));
+    return jsonOut_(findAndPost_(e.parameter.start_id, e.parameter.since));
   } catch (err) {
     var message = err && err.message;
-    var safe = ['WORKER_BASE is not set', 'sid must be a UUID', 'since must be ISO 8601 UTC',
+    var safe = ['WORKER_BASE is not set', 'start_id must be a UUID', 'since must be ISO 8601 UTC',
                 'PROCESSED_MAIL_IDS must be a JSON array of message IDs'];
     return jsonOut_({ ok: false, error: safe.indexOf(message) >= 0 ? message : 'detection failed; retry later' });
   }
@@ -61,7 +61,7 @@ function doGet(e) {
 /** 時間主導トリガー用のフォールバック (任意)。 */
 function scheduledCheck() {
   workerBase_();
-  throw new Error("sid and since are required; use the app kick");
+  throw new Error("start_id and since are required; use the app kick");
 }
 
 /** メール本文 (HTML) から session_id / token を取り出す。 */
@@ -87,21 +87,21 @@ function extract_(html) {
 }
 
 /** Gmail を検索し、未処理の開始メールがあれば Worker へ渡す。 */
-function findAndPost_(sid, since) {
+function findAndPost_(start_id, since) {
   var lock = LockService.getScriptLock();
   lock.waitLock(10000);
-  try { return findAndPostLocked_(sid, since); }
+  try { return findAndPostLocked_(start_id, since); }
   finally { lock.releaseLock(); }
 }
 
-function findAndPostLocked_(sid, since) {
-  if (typeof sid !== 'string' || !/^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(sid))
-    throw new Error('sid must be a UUID');
+function findAndPostLocked_(start_id, since) {
+  if (typeof start_id !== 'string' || !/^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(start_id))
+    throw new Error('start_id must be a UUID');
   if (typeof since !== 'string' || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/.test(since) || !isFinite(Date.parse(since)))
     throw new Error('since must be ISO 8601 UTC');
   var base = workerBase_();
   var p = props_();
-  if (p.getProperty('LAST_START_ID') === sid && p.getProperty('LAST_START_SESSION_ID'))
+  if (p.getProperty('LAST_START_ID') === start_id && p.getProperty('LAST_START_SESSION_ID'))
     return { ok: true, found: true, already: true, session_id: p.getProperty('LAST_START_SESSION_ID') };
   var raw = p.getProperty('PROCESSED_MAIL_IDS');
   var processed = raw ? JSON.parse(raw) : [];
@@ -148,7 +148,7 @@ function findAndPostLocked_(sid, since) {
   var mid = newest.msg.getId();
 
   var payload = {
-    start_id: sid,
+    start_id: start_id,
     session_id: newest.found.session_id,
     token: newest.found.token,
     mail_id: mid,
@@ -170,7 +170,7 @@ function findAndPostLocked_(sid, since) {
     };
   }
   p.setProperty('LAST_START_SESSION_ID', newest.found.session_id);
-  p.setProperty('LAST_START_ID', sid);
+  p.setProperty('LAST_START_ID', start_id);
   processed.push(mid);
   p.setProperty('PROCESSED_MAIL_IDS', JSON.stringify(processed.slice(-20)));
   p.setProperty('LAST_MAIL_ID', mid);
