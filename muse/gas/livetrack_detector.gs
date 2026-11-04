@@ -110,7 +110,7 @@ function findAndPost_() {
     return { ok: true, found: false };
   }
   if (mid === lastMailId) {
-    return { ok: true, found: true, already: true, session_id: lastSessionId };
+    return { ok: true, found: false, already: true, session_id: lastSessionId };
   }
 
   var payload = {

@@ -13,5 +13,7 @@ vm.createContext(context);
 vm.runInContext(fs.readFileSync(require("node:path").join(__dirname, "../gas/livetrack_detector.gs"), "utf8"), context);
 assert.equal(context.findAndPost_().found, false);
 age = 5;
-assert.equal(context.findAndPost_().found, true);
+const already = context.findAndPost_();
+assert.equal(already.found, false);
+assert.equal(already.already, true);
 console.log("PASS GAS freshness precedes duplicate detection");
