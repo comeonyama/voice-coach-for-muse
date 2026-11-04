@@ -14,6 +14,7 @@
  *   KICK_SECRET   : アプリからのキック用シークレット (自分で決める)
  *   UPLOAD_TOKEN  : Worker の secret と同じ値
  *   WORKER_BASE   : 必須。自分の Worker の URL を設定すること
+ *   PROCESSED_MAIL_IDS : 自動管理。処理済みメールIDのJSON配列（直近20件）
  */
 
 var URL_RE = /livetrack\.garmin\.com\/session\/([0-9a-fA-F-]{36})\/token\/([0-9a-fA-F]+)/;
@@ -85,33 +86,47 @@ function extract_(html) {
 /** Gmail を検索し、未処理の開始メールがあれば Worker へ渡す。 */
 function findAndPost_() {
   var p = props_();
+  var raw = p.getProperty('PROCESSED_MAIL_IDS');
+  var processed = raw ? JSON.parse(raw) : [];
+  if (!Array.isArray(processed) || processed.some(function(id) {
+    return typeof id !== 'string' || !id;
+  })) throw new Error('PROCESSED_MAIL_IDS must be a JSON array of message IDs');
+  processed = processed.filter(function(id, index, ids) {
+    return ids.lastIndexOf(id) === index;
+  }).slice(-20);
   var lastMailId = p.getProperty('LAST_MAIL_ID');
-  var lastSessionId = p.getProperty('LAST_SESSION_ID');
-
-  // 対象は「全スレッドの中で最も新しい開始メール」1件だけ。
-  // 処理済みの最新メールを飛ばして古いメールを再投稿する事故
-  // (セッションが交互に入れ替わる) を防ぐため、候補を1つに
-  // 決めてから重複・鮮度を判定する。
-  var threads = GmailApp.search('livetrack newer_than:2h', 0, 5);
-  var newest = null;
-  for (var t = 0; t < threads.length; t++) {
-    var msgs = threads[t].getMessages();
-    for (var i = 0; i < msgs.length; i++) {
-      var msg = msgs[i];
-      if (newest && msg.getDate() <= newest.msg.getDate()) continue;
-      var found = extract_(msg.getBody());
-      if (found) newest = { msg: msg, found: found };
-    }
+  if (lastMailId && processed.indexOf(lastMailId) === -1) {
+    processed.push(lastMailId);
+    processed = processed.slice(-20);
   }
-  if (!newest) return { ok: true, found: false };
+  p.setProperty('PROCESSED_MAIL_IDS', JSON.stringify(processed));
 
-  var mid = newest.msg.getId();
+  // 検索結果をページ単位で全件確認し、未処理の最新候補を選ぶ。
+  var newest = null;
+  var already = false;
+  var pageSize = 100;
+  for (var offset = 0; ; offset += pageSize) {
+    var threads = GmailApp.search('livetrack newer_than:2h', offset, pageSize);
+    for (var t = 0; t < threads.length; t++) {
+      var msgs = threads[t].getMessages();
+      for (var i = 0; i < msgs.length; i++) {
+        var msg = msgs[i];
+        if (processed.indexOf(msg.getId()) !== -1) {
+          already = true;
+          continue;
+        }
+        if (newest && msg.getDate() <= newest.msg.getDate()) continue;
+        var found = extract_(msg.getBody());
+        if (found) newest = { msg: msg, found: found };
+      }
+    }
+    if (threads.length < pageSize) break;
+  }
+  if (!newest) return { ok: true, found: false, already: already };
   if (Date.now() - newest.msg.getDate().getTime() > MAX_MAIL_AGE_MIN * 60 * 1000) {
     return { ok: true, found: false };
   }
-  if (mid === lastMailId) {
-    return { ok: true, found: false, already: true, session_id: lastSessionId };
-  }
+  var mid = newest.msg.getId();
 
   var payload = {
     session_id: newest.found.session_id,
@@ -130,10 +145,12 @@ function findAndPost_() {
   if (resp.getResponseCode() !== 200) {
     return {
       ok: false,
-      found: true,
+      found: false,
       error: 'worker rejected: ' + resp.getResponseCode() + ' ' + resp.getContentText()
     };
   }
+  processed.push(mid);
+  p.setProperty('PROCESSED_MAIL_IDS', JSON.stringify(processed.slice(-20)));
   p.setProperty('LAST_MAIL_ID', mid);
   p.setProperty('LAST_SESSION_ID', newest.found.session_id);
   return { ok: true, found: true, session_id: newest.found.session_id };
