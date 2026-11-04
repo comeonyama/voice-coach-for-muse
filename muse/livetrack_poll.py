@@ -50,6 +50,7 @@ import tempfile
 import urllib.request
 import urllib.error
 from datetime import datetime, timezone
+from runtime import private_dir, error_info
 
 BASE = "https://livetrack.garmin.com"
 UA = {"User-Agent": "Mozilla/5.0 (Voice Coach for Muse livetrack poller)", "Accept": "application/json"}
@@ -101,7 +102,7 @@ def http_json(url, opener=None, csrf=""):
         except Exception:
             return e.code, None
     except Exception as e:  # network error etc.
-        return None, {"_error": str(e)}
+        return None, {"_error": type(e).__name__}
 
 
 def parse_ts(s):
@@ -278,7 +279,7 @@ def main():
                 pass
 
     # save state atomically
-    os.makedirs(os.path.dirname(os.path.abspath(args.state)), exist_ok=True)
+    private_dir(os.path.dirname(os.path.abspath(args.state)))
     fd, tmp = tempfile.mkstemp(dir=os.path.dirname(os.path.abspath(args.state)), suffix=".tmp")
     with os.fdopen(fd, "w", encoding="utf-8") as fh:
         json.dump(state, fh, ensure_ascii=False)

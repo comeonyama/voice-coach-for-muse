@@ -58,6 +58,8 @@ import pathlib
 import subprocess
 import time
 from collections import deque
+from configuration import validate_config
+from runtime import private_dir, private_append, write_json, error_info
 
 DIGITS_JP = {"0": "ゼロ", "1": "いち", "2": "に", "3": "さん", "4": "よん",
              "5": "ご", "6": "ろく", "7": "なな", "8": "はち", "9": "きゅう"}
@@ -99,10 +101,11 @@ def pace_str(spk):
 
 class Monitor:
     def __init__(self, cfg, session, neta, stock):
+        validate_config(cfg)
         self.cfg = cfg
         self.session = session
         self.state_dir = pathlib.Path(cfg["state_dir"])
-        self.state_dir.mkdir(parents=True, exist_ok=True)
+        private_dir(self.state_dir)
         self.tz = datetime.timezone(datetime.timedelta(hours=cfg.get("timezone_offset_hours", 9)))
         self.log_path = self.state_dir / "coach_log.jsonl"
         self.used_path = self.state_dir / "used_comments.json"
@@ -144,7 +147,7 @@ class Monitor:
     # ---------- infrastructure ----------
     def log(self, obj):
         obj["at"] = datetime.datetime.now(self.tz).isoformat(timespec="seconds")
-        with open(self.log_path, "a", encoding="utf-8") as f:
+        with private_append(self.log_path) as f:
             f.write(json.dumps(obj, ensure_ascii=False) + "\n")
 
     def _load_used(self):
@@ -154,7 +157,7 @@ class Monitor:
             return set()
 
     def _save_used(self):
-        self.used_path.write_text(json.dumps(sorted(self.used), ensure_ascii=False, indent=1))
+        write_json(self.used_path, sorted(self.used))
 
     def _initial_seq(self):
         qpath = self.cfg.get("queue_json")
@@ -347,7 +350,7 @@ class Monitor:
                 if sdoc.get("state") == "live":
                     sdoc["state"] = "closed"
                     sdoc["closed_by"] = "coach_monitor"
-                    sp.write_text(json.dumps(sdoc, ensure_ascii=False, indent=1))
+                    write_json(sp, sdoc)
         except Exception:
             pass
         self.log({"event": "finished", "dist": dist, "reason": reason})
@@ -442,7 +445,7 @@ class Monitor:
                     self.last_send = now
                 time.sleep(poll_interval)
             except Exception as e:
-                self.log({"event": "loop_error", "error": str(e)[:200]})
+                self.log({"event": "loop_error", **error_info(e, "monitor_loop")})
                 time.sleep(poll_interval)
         self.log({"event": "timeout_or_cap"})
         return 0
@@ -463,7 +466,10 @@ def main():
     stock_path = args.stock or cfg.get("stock_file")
     if stock_path:
         stock.update(json.loads(pathlib.Path(stock_path).read_text()))
-    mon = Monitor(cfg, session, neta, stock)
+    try:
+        mon = Monitor(cfg, session, neta, stock)
+    except ValueError as e:
+        ap.error(str(e))
     raise SystemExit(mon.run())
 
 

@@ -16,6 +16,7 @@ Usage:
                      [--once] [--dry-run]
 """
 import argparse, datetime, json, os, pathlib, subprocess, sys, time
+from runtime import private_dir, private_append, write_json, error_info
 import urllib.request, urllib.error
 
 sys.path.insert(0, "/opt/muse/skills/custom-connector-setup/bin")
@@ -64,7 +65,7 @@ def load_watcher_state():
 
 
 def save_watcher_state(st):
-    WATCHER_STATE.write_text(json.dumps(st, ensure_ascii=False, indent=1) + "\n")
+    write_json(WATCHER_STATE, st)
 
 
 def parse_ts(s):
@@ -120,20 +121,19 @@ class Watcher:
         prev = self.state_dir / "poll_state.json"
         if prev.exists():
             prev.rename(self.state_dir / "poll_state_prev.json")
-        (self.state_dir / "last_session_mail.json").write_text(
-            json.dumps({"mail_id": sess.get("mail_id", "")}))
-        self.session_path().write_text(json.dumps({
+        write_json(self.state_dir / "last_session_mail.json", {"mail_id": sess.get("mail_id", "")})
+        write_json(self.session_path(), {
             "session_id": sid, "token": sess["token"],
             "mail_id": sess.get("mail_id", ""), "state": "live",
             "started_mail_at": sess.get("received_at", ""),
             "source": "session_watcher",
-        }, ensure_ascii=False, indent=1))
+        })
         pub = self.cfg["publish_script"]
         for cmd in (["init", qsession], ["sync"]):
             r = subprocess.run(["python3", pub, *cmd],
                                capture_output=True, text=True, timeout=60)
             log(f"publish {' '.join(cmd)} rc={r.returncode} {(r.stdout or '').strip()[:120]}")
-        logf = open(self.state_dir / "monitor_auto.log", "a", encoding="utf-8")
+        logf = private_append(self.state_dir / "monitor_auto.log")
         self.monitor_proc = subprocess.Popen(
             ["python3", self.args.monitor, "--config", self.args.config,
              "--session", str(self.session_path())],
@@ -193,7 +193,7 @@ def main():
         try:
             w.cycle()
         except Exception as e:
-            log(f"cycle error: {e}")
+            log(json.dumps(error_info(e, "watcher_cycle")))
         if args.once:
             return
         time.sleep(args.interval)

@@ -24,6 +24,7 @@ Exit codes: 0 = monitor finished normally, 2 = monitor aborted,
 3 = no session mail found before the deadline.
 """
 import argparse
+from runtime import private_dir, private_append, write_json, error_info
 import datetime
 import json
 import pathlib
@@ -73,7 +74,7 @@ class Watcher:
         self.args = args
         cfg = json.loads(pathlib.Path(args.config).read_text())
         self.state = pathlib.Path(args.state_dir or cfg["state_dir"])
-        self.state.mkdir(parents=True, exist_ok=True)
+        private_dir(self.state)
         self.last_mail_path = self.state / "last_session_mail.json"
 
     def last_mail_id(self):
@@ -104,7 +105,7 @@ class Watcher:
         args = self.args
         announcer = None
         if not args.no_announce:
-            logf = open(self.state / "wait_announce.log", "a", encoding="utf-8")
+            logf = private_append(self.state / "wait_announce.log")
             announcer = subprocess.Popen(
                 ["python3", str(pathlib.Path(__file__).with_name("wait_announce.py")),
                  "--config", args.config, "--session", args.queue_session],
@@ -124,14 +125,14 @@ class Watcher:
             return 3
         mid, sid, token = found
         print(f"session found mail={mid} session={sid}", flush=True)
-        self.last_mail_path.write_text(json.dumps({"mail_id": mid}))
+        write_json(self.last_mail_path, {"mail_id": mid})
         prev = self.state / "poll_state.json"
         if prev.exists():
             prev.rename(self.state / "poll_state_prev.json")
-        (self.state / "session.json").write_text(json.dumps({
+        write_json(self.state / "session.json", {
             "session_id": sid, "token": token, "mail_id": mid, "state": "live",
             "started_mail_at": datetime.datetime.now(TZ).isoformat(timespec="seconds"),
-        }, ensure_ascii=False, indent=1))
+        })
         cmd = ["python3", args.monitor, "--config", args.config,
                "--session", str(self.state / "session.json")]
         if args.neta:

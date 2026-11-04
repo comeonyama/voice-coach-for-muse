@@ -19,6 +19,7 @@ Usage:
   finalize_run.py --config coach_config.json [--dry-run] [--force]
 """
 import argparse
+from runtime import private_dir, private_append, write_json, error_info
 import datetime
 import json
 import pathlib
@@ -92,7 +93,7 @@ def main():
         sess["closed_by"] = "finalize_run"
         sess["closed_at"] = datetime.datetime.now(
             datetime.timezone(datetime.timedelta(hours=9))).isoformat(timespec="seconds")
-        sess_path.write_text(json.dumps(sess, ensure_ascii=False, indent=1))
+        write_json(sess_path, sess)
         print("no track points recorded; session state closed without a closing message")
         return 0
     ts = ps.get("last_point_ts")
@@ -128,7 +129,7 @@ def main():
     sess["closed_by"] = "finalize_run"
     sess["closed_at"] = datetime.datetime.now(
         datetime.timezone(datetime.timedelta(hours=9))).isoformat(timespec="seconds")
-    sess_path.write_text(json.dumps(sess, ensure_ascii=False, indent=1))
+    write_json(sess_path, sess)
     print("finalized: queue on standby, audio cleaned, session closed")
     return 0
 
