@@ -28,6 +28,15 @@ class BaselineTests(unittest.TestCase):
             with self.subTest(key=key), self.assertRaisesRegex(ValueError, "config"):
                 validate_config(dict(cfg, **{key: value}))
 
+    def test_restart_sequence_preserves_gaps(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "queue.json"
+            path.write_text(json.dumps({"messages": [
+                {"id": "run-001"}, {"id": "run-007"}, {"id": "run-final"}]}))
+            monitor = Monitor.__new__(Monitor)
+            monitor.cfg = {"queue_json": str(path)}
+            self.assertEqual(monitor._initial_seq(), 7)
+
     def test_permissions_and_error_redaction(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "state" / "session.json"
@@ -167,3 +176,109 @@ class ConcurrentPublisherTests(unittest.TestCase):
                 process.join(10)
                 self.assertEqual(process.exitcode, 0)
             self.assertEqual({m["id"] for m in pub.load_queue()["messages"]}, {str(i) for i in range(8)})
+
+
+class FinishTests(unittest.TestCase):
+    def test_resume_each_failed_stage_without_erasing_history(self):
+        import finish_run as finish
+        for failure in ("closing", "history-append", "init", "sync", "cleanup"):
+            with self.subTest(stage=failure), tempfile.TemporaryDirectory() as directory:
+                state = Path(directory) / "state"
+                queue = Path(directory) / "queue" / "queue.json"
+                cfg = dict(state_dir=str(state), queue_json=str(queue),
+                           close={"wait_before_standby_sec": 0},
+                           audio=True, say_retry_backoff_sec=0, publish_script="fixture")
+                session = {"session_id": "sid", "token": "fake", "state": "live"}
+                write_json(state / "session.json", session)
+                write_json(queue, {"session": "run-fixture", "messages": []})
+                calls = []
+                failing = True
+
+                def publish(cfg, *args, **kwargs):
+                    command = args[0]
+                    calls.append(command)
+                    fail = failing and (command == failure or failure == "closing" and command in ("say", "post"))
+                    if command == "init" and not fail:
+                        write_json(queue, {"session": args[1], "messages": []})
+                    return {"ok": not fail}
+
+                with patch.object(finish, "publish_retry", side_effect=publish):
+                    self.assertFalse(finish.finish_run(cfg, session, "closing", "ended", lambda event: None))
+                    self.assertEqual(json.loads((state / "session.json").read_text())["state"], "live")
+                    if failure in ("closing", "history-append"):
+                        self.assertNotIn("init", calls)
+                        self.assertEqual(json.loads(queue.read_text())["session"], "run-fixture")
+                    calls.clear()
+                    failing = False
+                    self.assertTrue(finish.finish_run(cfg, session, "closing", "ended", lambda event: None))
+                    if failure != "closing":
+                        self.assertNotIn("say", calls)
+                    self.assertEqual(json.loads((state / "session.json").read_text())["state"], "closed")
+                    calls.clear()
+                    self.assertTrue(finish.finish_run(cfg, session, "closing", "ended", lambda event: None))
+                    self.assertEqual(calls, [])
+
+    def test_history_merge_without_local_copy_and_read_failure(self):
+        import importlib
+        import types
+        credentials = types.ModuleType("dynamic_credentials")
+        credentials.add_surrogate_to_request = lambda *args, **kwargs: None
+        credentials.read_json_response = lambda response: None
+        with patch.dict(sys.modules, {"dynamic_credentials": credentials}):
+            pub = importlib.import_module("publish")
+        remote = {"runs": [{"session": "run-2026-11-01", "date": "2026-11-01",
+                            "messages": [{"id": "old", "ts": "2026-11-01", "text": "old"}]}]}
+        with tempfile.TemporaryDirectory() as directory, patch.object(pub, "BASE", directory), \
+             contextlib.redirect_stdout(io.StringIO()):
+            write_json(Path(directory) / "queue.json",
+                       {"session": "run-2026-11-04", "messages": [{"id": "new", "ts": "2026-11-04", "text": "new"}]})
+            with patch.object(pub, "remote_history", return_value=remote), \
+                 patch.object(pub, "post", return_value=(200, {"ok": True})) as post:
+                pub.cmd_history_append()
+                history = json.loads(post.call_args.args[1])
+                self.assertEqual([run["session"] for run in history["runs"]],
+                                 ["run-2026-11-04", "run-2026-11-01"])
+            with patch.object(pub, "remote_history", side_effect=OSError("offline")), \
+                 patch.object(pub, "post") as post:
+                with self.assertRaises(OSError):
+                    pub.cmd_history_append()
+                post.assert_not_called()
+
+    def test_finalize_dry_run_is_read_only(self):
+        import finalize_run
+        with tempfile.TemporaryDirectory() as directory:
+            state = Path(directory) / "state"
+            session = {"session_id": "sid", "token": "fake", "state": "live"}
+            write_json(state / "session.json", session)
+            cfg = dict(state_dir=str(state), poll_script="fixture", publish_script="fixture")
+            config_path = Path(directory) / "config.json"
+            config_path.write_text(json.dumps(cfg))
+            with patch.object(sys, "argv", ["finalize", "--config", str(config_path), "--dry-run"]), \
+                 contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(finalize_run.main(), 0)
+            self.assertEqual(json.loads((state / "session.json").read_text()), session)
+            self.assertFalse((state / "finish_state.json").exists())
+
+    def test_recovery_without_points_honors_text_mode(self):
+        import finalize_run
+        import finish_run as finish
+        import types
+        with tempfile.TemporaryDirectory() as directory:
+            state = Path(directory) / "state"
+            queue = Path(directory) / "queue" / "queue.json"
+            cfg = dict(state_dir=str(state), queue_json=str(queue), poll_script="fixture",
+                       publish_script="fixture", audio=False)
+            write_json(state / "session.json", {"session_id": "sid", "token": "fake", "state": "live"})
+            write_json(queue, {"session": "run-fixture", "messages": []})
+            calls = []
+
+            def publish(cfg, *args, **kwargs):
+                calls.append(args[0])
+                if args[0] == "init":
+                    write_json(queue, {"session": args[1], "messages": []})
+                return {"ok": True}
+
+            with patch.object(finish, "publish_retry", side_effect=publish):
+                result = finalize_run.recover(cfg, types.SimpleNamespace(force=False, fresh_sec=120, wait=0))
+            self.assertEqual(result, 0)
+            self.assertEqual(calls, ["post", "history-append", "init", "sync", "cleanup"])

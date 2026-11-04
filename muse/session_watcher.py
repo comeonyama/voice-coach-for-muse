@@ -96,8 +96,8 @@ class Watcher:
             return
         log("leftover live session found; running finalize_run.py")
         r = subprocess.run(["python3", str(fin), "--config", self.args.config],
-                           capture_output=True, text=True, timeout=300)
-        log(f"finalize_run rc={r.returncode} out={(r.stdout or '').strip()[-200:]} err={(r.stderr or '').strip()[-200:]}")
+                           capture_output=True, text=True)
+        log(f"finalize_run rc={r.returncode}")
 
     def launch(self, sess, dry_run, resume=False):
         sid = sess["session_id"]
@@ -114,7 +114,6 @@ class Watcher:
             prev = self.state_dir / "poll_state.json"
             if prev.exists():
                 prev.rename(self.state_dir / "poll_state_prev.json")
-            pub = self.cfg["publish_script"]
             for cmd in (["init", qsession], ["sync"]):
                 result = publisher_call(self.cfg, *cmd)
                 if not result["ok"]:

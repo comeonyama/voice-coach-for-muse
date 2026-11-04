@@ -27,41 +27,10 @@ import subprocess
 import sys
 import time
 
-DIGITS_JP = {"0": "ゼロ", "1": "いち", "2": "に", "3": "さん", "4": "よん",
-             "5": "ご", "6": "ろく", "7": "なな", "8": "はち", "9": "きゅう"}
-
-
-def num_jp(n):
-    if n < 10:
-        return DIGITS_JP[str(n)]
-    t, o = divmod(n, 10)
-    s = (DIGITS_JP[str(t)] if t > 1 else "") + "じゅう"
-    if o:
-        s += DIGITS_JP[str(o)]
-    return s
-
-
-def dist_spoken(d):
-    d = round(d, 1)
-    i = int(d)
-    f = int(round((d - i) * 10))
-    if f == 10:
-        i += 1
-        f = 0
-    if f == 0:
-        return num_jp(i)
-    return f"{num_jp(i)}点{DIGITS_JP[str(f)]}"
-
-
-def pace_str(spk):
-    if not spk or spk <= 0:
-        return "―"
-    m = int(spk // 60)
-    s = int(round(spk % 60))
-    if s == 60:
-        m += 1
-        s = 0
-    return f"{m}分{s:02d}秒"
+from coach_monitor import Monitor
+from configuration import validate_config
+from runtime import file_lock
+from finish_run import finish_run, load_pending
 
 
 def main():
@@ -73,72 +42,59 @@ def main():
     ap.add_argument("--wait", type=int, default=60)
     args = ap.parse_args()
 
-    cfg = json.loads(pathlib.Path(args.config).read_text())
+    cfg = validate_config(json.loads(pathlib.Path(args.config).read_text()))
     state = pathlib.Path(cfg["state_dir"])
-    sess_path = state / "session.json"
-    sess = read_state(sess_path, valid=valid_session)
-    if sess is None:
-        print("no valid session to finalize")
-        return 0
-    if sess.get("state") != "live":
-        print(f"nothing to do: session state is {sess.get('state')!r}")
-        return 0
-    ps_path = state / "poll_state.json"
-    ps = read_state(ps_path, {}, valid=lambda value: isinstance(value.get("last_point"), (dict, type(None))))
-    lp = ps.get("last_point") or {}
-    dist = float(lp.get("dist_m") or 0) / 1000.0
-    dur = lp.get("dur_s") or 0
-    if dist <= 0.05:
-        # No data to recover a closing from. Still close the state:
-        # leaving it "live" makes the session watcher retry forever and
-        # blocks the next run's automatic start.
-        if args.dry_run:
-            print("dry-run: would close session without track points")
+    if args.dry_run:
+        # Preview performs no quarantine, chmod or state writes.
+        try:
+            session = json.loads((state / "session.json").read_text())
+        except (OSError, ValueError):
+            print("dry-run: session unavailable")
             return 0
-        sess["state"] = "closed"
-        sess["closed_by"] = "finalize_run"
-        sess["closed_at"] = datetime.datetime.now(
-            datetime.timezone(datetime.timedelta(hours=9))).isoformat(timespec="seconds")
-        write_json(sess_path, sess)
-        print("no track points recorded; session state closed without a closing message")
+        print("dry-run: would resume closing, history, standby, cleanup" if session.get("state") == "live" else "nothing to do")
         return 0
+    try:
+        with file_lock(state / ".monitor.lock", blocking=False):
+            return recover(cfg, args)
+    except BlockingIOError:
+        print("refusing: a monitor owns this state directory")
+        return 4
+
+
+def recover(cfg, args):
+    state = pathlib.Path(cfg["state_dir"])
+    session = read_state(state / "session.json", valid=valid_session)
+    if not session or session.get("state") != "live":
+        print("nothing to finalize")
+        return 0
+    progress = load_pending(cfg, session)
+    monitor = Monitor(cfg, session, [], {})
+    if progress:
+        return 0 if finish_run(cfg, session, progress["text"], progress["reason"], monitor.log) else 2
+    ps = read_state(state / "poll_state.json", {},
+                    valid=lambda value: value.get("session_id") == session["session_id"]
+                    and isinstance(value.get("last_point"), (dict, type(None))))
     ts = ps.get("last_point_ts")
     if ts and not args.force:
-        t = datetime.datetime.fromisoformat(ts.replace("Z", "+00:00"))
-        age = (datetime.datetime.now(datetime.timezone.utc) - t).total_seconds()
-        if age < args.fresh_sec:
-            print(f"refusing: last point is only {int(age)}s old; a monitor may still be running (use --force)")
+        try:
+            timestamp = datetime.datetime.fromisoformat(ts.replace("Z", "+00:00"))
+            age = (datetime.datetime.now(datetime.timezone.utc) - timestamp).total_seconds()
+        except (ValueError, TypeError):
+            age = None
+        if age is not None and age < args.fresh_sec:
+            print("refusing: last point is fresh; use --force after checking the monitor")
             return 4
-    avg = dur / dist
-    closing = cfg.get("closing_text",
-                      "{distance}キロ。平均ペースはキロ{pace}でした。おつかれさまでした。")
-    text = closing.replace("{distance}", dist_spoken(dist)).replace("{pace}", pace_str(avg))
-    print(f"closing: {text}  (dist={dist:.2f} km, dur={dur}s)")
-
-    def publish(*a):
-        r = subprocess.run(["python3", cfg["publish_script"], *a],
-                           capture_output=True, text=True, timeout=120)
-        return '"ok": true' in (r.stdout or "")
-
-    if args.dry_run:
-        print("dry-run: would say the closing, wait, init standby, sync, cleanup, mark closed")
-        return 0
-    ok = publish("say", "run-final", text)
-    print("closing published:", ok)
-    if args.wait:
-        time.sleep(args.wait)
-    standby = (cfg.get("close") or {}).get("standby_session", "standby")
-    publish("init", standby)
-    publish("sync")
-    publish("cleanup", "0")
-    sess["state"] = "closed"
-    sess["closed_by"] = "finalize_run"
-    sess["closed_at"] = datetime.datetime.now(
-        datetime.timezone(datetime.timedelta(hours=9))).isoformat(timespec="seconds")
-    write_json(sess_path, sess)
-    print("finalized: queue on standby, audio cleaned, session closed")
-    return 0
+    dist = monitor.last_dist
+    avg = monitor.last_dur / dist if dist > 0.05 else None
+    # Preserve --wait and its default on the recovery CLI.
+    cfg = dict(cfg, close=dict(cfg.get("close") or {}, wait_before_standby_sec=args.wait))
+    monitor.cfg = cfg
+    return monitor.finish(dist, avg, "finalize_recovery")
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    try:
+        sys.exit(main())
+    except Exception as error:
+        print(json.dumps({"ok": False, **error_info(error, "finalize")}))
+        sys.exit(2)

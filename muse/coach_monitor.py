@@ -60,6 +60,7 @@ import time
 from collections import deque
 from configuration import validate_config
 from delivery import publisher_call
+from finish_run import finish_run, load_pending
 from runtime import private_dir, private_append, write_json, error_info, read_state, valid_session, file_lock
 
 DIGITS_JP = {"0": "ゼロ", "1": "いち", "2": "に", "3": "さん", "4": "よん",
@@ -166,7 +167,12 @@ class Monitor:
         if qpath:
             try:
                 q = json.loads(pathlib.Path(qpath).read_text())
-                return len(q.get("messages", []))
+                numbers = [int(message["id"][4:])
+                           for message in q.get("messages", [])
+                           if isinstance(message.get("id"), str)
+                           and message["id"].startswith("run-")
+                           and message["id"][4:].isdigit()]
+                return max(numbers, default=0)
             except Exception:
                 return 0
         return 0
@@ -324,39 +330,14 @@ class Monitor:
             closing = cfg.get("closing_text",
                                "{distance}キロ。平均ペースはキロ{pace}でした。おつかれさまでした。")
             text = closing.replace("{distance}", dist_spoken(dist)).replace("{pace}", pace_str(avg))
-        ok = self.say(text, attempts=int(cfg.get("closing_attempts", 4)))
-        entry = {"event": "closing_sent", "ok": ok, "reason": reason}
-        if no_live:
-            entry["no_live"] = True
-        self.log(entry)
-        wait = (cfg.get("close") or {}).get("wait_before_standby_sec", 60)
-        if wait:
-            time.sleep(wait)
-        # Preserve this run in the app's history before the queue is wiped.
-        self.publish_retry("history-append")
-        standby = (cfg.get("close") or {}).get("standby_session", "standby")
-        self.publish_retry("init", standby)
-        self.publish_retry("sync")
-        self.publish_retry("cleanup", "0")
-        # Mark the state-dir session record closed, so the session watcher
-        # does not mistake this finished run for a leftover live session
-        # when the next run's session arrives.
-        try:
-            sp = self.state_dir / "session.json"
-            if sp.exists():
-                sdoc = json.loads(sp.read_text())
-                if sdoc.get("state") == "live":
-                    sdoc["state"] = "closed"
-                    sdoc["closed_by"] = "coach_monitor"
-                    write_json(sp, sdoc)
-        except Exception:
-            pass
-        self.log({"event": "finished", "dist": dist, "reason": reason})
-        return 0
+        return 0 if finish_run(cfg, self.session, text, reason, self.log) else 2
 
     def run(self):
         cfg = self.cfg
         self.log({"event": "monitor_start", "seq_from": self.seq})
+        progress = load_pending(cfg, self.session)
+        if progress:
+            return 0 if finish_run(cfg, self.session, progress["text"], progress["reason"], self.log) else 2
         start_wall = time.time()
         max_dur = cfg.get("max_duration_min", 360) * 60
         max_msg = cfg.get("max_messages", 200)
@@ -458,6 +439,10 @@ def main():
     args = ap.parse_args()
 
     cfg = json.loads(pathlib.Path(args.config).read_text())
+    try:
+        validate_config(cfg)
+    except ValueError as e:
+        ap.error(str(e))
     session = read_state(args.session, valid=valid_session)
     if session is None:
         ap.error("session file is missing or invalid; invalid files are quarantined")

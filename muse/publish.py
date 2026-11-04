@@ -63,6 +63,26 @@ def serialized(function):
     return locked
 
 
+def remote_history():
+    request = urllib.request.Request(f"https://{HOST}/history.json",
+                                     headers={"User-Agent": UA, "Cache-Control": "no-cache"})
+    with urllib.request.build_opener(NoRedirect()).open(request, timeout=30) as response:
+        history = json.load(response)
+    validate_history(history)
+    return history
+
+
+def validate_history(history):
+    if not isinstance(history, dict) or not isinstance(history.get("runs"), list):
+        raise ValueError("invalid history")
+    for run in history["runs"]:
+        if not isinstance(run, dict) or not isinstance(run.get("session"), str) or not isinstance(run.get("date"), str) or not isinstance(run.get("messages"), list):
+            raise ValueError("invalid history run")
+        for message in run["messages"]:
+            if not isinstance(message, dict) or any(not isinstance(message.get(key), str) for key in ("id", "ts", "text")):
+                raise ValueError("invalid history message")
+
+
 def load_queue():
     with open(f"{BASE}/queue.json", encoding="utf-8") as f:
         queue = json.load(f)
@@ -223,9 +243,7 @@ def cmd_history(path):
     status, resp = post("op=history", body, "application/json")
     ok = status == 200 and resp.get("ok")
     if ok:
-        with open(f"{BASE}/history.json", "w", encoding="utf-8") as f:
-            json.dump(hist, f, ensure_ascii=False, indent=2)
-            f.write("\n")
+        write_json(Path(BASE) / "history.json", hist)
     print(json.dumps({"ok": ok, "status": status, "resp": resp}))
 
 @serialized
@@ -245,21 +263,26 @@ def cmd_history_append():
         print(json.dumps({"ok": True, "skipped": True}))
         return
     hpath = f"{BASE}/history.json"
-    hist = {"runs": []}
-    if os.path.exists(hpath):
-        with open(hpath, encoding="utf-8") as f:
-            hist = json.load(f)
-    runs = [r for r in hist.get("runs", []) if r.get("session") != session]
+    # A failed read must never be interpreted as an empty remote archive.
+    hist = remote_history()
+    merged = {}
+    for run in hist["runs"]:
+        previous = merged.get(run["session"], {"messages": []})
+        by_id = {message["id"]: message for message in previous["messages"]}
+        by_id.update({message["id"]: message for message in run["messages"]})
+        merged[run["session"]] = dict(run, messages=list(by_id.values()))
+    previous = merged.get(session, {"messages": []})
+    by_id = {message["id"]: message for message in previous["messages"]}
+    by_id.update({message["id"]: message for message in msgs})
     date = session[4:14] if session.startswith("run-") and len(session) >= 14 else msgs[0]["ts"][:10]
-    runs.insert(0, {"session": session, "date": date, "messages": msgs})
-    hist["runs"] = runs[:10]
+    merged[session] = {"session": session, "date": date,
+                       "messages": sorted(by_id.values(), key=lambda message: message["ts"])}
+    hist["runs"] = sorted(merged.values(), key=lambda run: (run["date"], run["session"]), reverse=True)[:10]
     body = (json.dumps(hist, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
     status, resp = post("op=history", body, "application/json")
     ok = status == 200 and resp.get("ok")
     if ok:
-        with open(hpath, "w", encoding="utf-8") as f:
-            json.dump(hist, f, ensure_ascii=False, indent=2)
-            f.write("\n")
+        write_json(hpath, hist)
     print(json.dumps({"ok": ok, "status": status, "session": session, "messages": len(msgs)}))
 
 @serialized
