@@ -24,6 +24,7 @@ Usage:
 Typically launched in the background by run_watch.py; its stdout is
 meant to be redirected to a log file in the state directory.
 """
+from delivery import publisher_call
 import argparse
 import datetime
 import json
@@ -46,6 +47,7 @@ def now():
 
 class Announcer:
     def __init__(self, cfg, session_name, interval, max_min):
+        self.cfg = cfg
         self.pub = cfg["publish_script"]
         self.state_dir = pathlib.Path(cfg["state_dir"])
         self.queue_json = cfg.get("queue_json")
@@ -55,9 +57,7 @@ class Announcer:
         self.seq = 0
 
     def publish(self, *args):
-        r = subprocess.run(["python3", self.pub, *args],
-                           capture_output=True, text=True, timeout=120)
-        return '"ok": true' in (r.stdout or "")
+        return publisher_call(self.cfg, *args)["ok"]
 
     def stop_reason(self):
         if (self.state_dir / "session.json").exists():

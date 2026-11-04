@@ -19,6 +19,9 @@ Local mirror of the queue lives in $VCM_QUEUE_DIR (default ~/vcm/queue)
 """
 import json, subprocess, sys, datetime, os
 import urllib.request
+from functools import wraps
+from pathlib import Path
+from runtime import write_json, file_lock, error_info
 sys.path.insert(0, "/opt/muse/skills/custom-connector-setup/bin")
 from dynamic_credentials import add_surrogate_to_request, read_json_response
 
@@ -49,20 +52,34 @@ def post(query, body, content_type):
             return e.code, read_json_response(e)
         except Exception:
             return e.code, {"ok": False, "error": "non-JSON error response"}
+    except Exception as error:
+        return None, {"ok": False, **error_info(error, "upload")}
+
+def serialized(function):
+    @wraps(function)
+    def locked(*args, **kwargs):
+        with file_lock(Path(BASE) / ".publisher.lock"):
+            return function(*args, **kwargs)
+    return locked
+
 
 def load_queue():
     with open(f"{BASE}/queue.json", encoding="utf-8") as f:
-        return json.load(f)
+        queue = json.load(f)
+    if not isinstance(queue, dict) or not isinstance(queue.get("session"), str) or not isinstance(queue.get("messages"), list):
+        raise ValueError("invalid queue")
+    return queue
+
 
 def save_queue(q):
-    with open(f"{BASE}/queue.json", "w", encoding="utf-8") as f:
-        json.dump(q, f, ensure_ascii=False, indent=2)
-        f.write("\n")
+    write_json(Path(BASE) / "queue.json", q)
+
 
 def upload_queue(q):
     body = (json.dumps(q, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
     return post("op=queue", body, "application/json")
 
+@serialized
 def cmd_init(session):
     os.makedirs(f"{BASE}/audio", exist_ok=True)
     q = {"session": session, "messages": []}
@@ -134,9 +151,25 @@ def synthesize(text, mp3):
 def _append_and_upload(mid, text, audio):
     q = load_queue()
     now = datetime.datetime.now(JST)
-    q["messages"].append({"id": mid,
-                          "ts": now.strftime("%Y-%m-%dT%H:%M:%S+09:00"),
-                          "audio": audio, "text": text})
+    existing = next((m for m in q["messages"] if m.get("id") == mid), None)
+    message = {"id": mid,
+               "ts": existing["ts"] if existing else now.strftime("%Y-%m-%dT%H:%M:%S+09:00"),
+               "audio": audio, "text": text}
+    # Keep the position and timestamp of a retried message, removing old duplicates.
+    messages = []
+    replaced = False
+    for old in q["messages"]:
+        if old.get("id") == mid:
+            if not replaced:
+                messages.append(message)
+                replaced = True
+        else:
+            messages.append(old)
+    if not replaced:
+        messages.append(message)
+    q["messages"] = messages
+    # Durable pending snapshot: an uncertain remote result must not lose this message.
+    save_queue(q)
     status, resp = upload_queue(q)
     if status != 200 or not resp.get("ok"):
         print(json.dumps({"ok": False, "stage": "queue", "status": status, "resp": resp}))
@@ -145,30 +178,41 @@ def _append_and_upload(mid, text, audio):
     print(json.dumps({"ok": True, "id": mid, "messages": len(q["messages"])}))
     return True
 
+@serialized
 def cmd_say(mid, text):
     os.makedirs(f"{BASE}/audio", exist_ok=True)
+    import re
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", mid):
+        raise ValueError("invalid message id")
     mp3 = f"{BASE}/audio/{mid}.mp3"
     try:
         synthesize(text, mp3)
     except Exception as e:
-        print(json.dumps({"ok": False, "stage": "tts", "error": str(e)[:200]}))
+        print(json.dumps({"ok": False, **error_info(e, "tts")}))
         return
     with open(mp3, "rb") as f:
         audio = f.read()
-    status, resp = post(f"op=audio&name={mid}.mp3", audio, "audio/mpeg")
+    import hashlib
+    session_name = load_queue()["session"]
+    digest = hashlib.sha256(session_name.encode() + b"\0" + audio).hexdigest()
+    name = f"{mid}-{digest}.mp3"
+    status, resp = post(f"op=audio&name={name}", audio, "audio/mpeg")
     if status != 200 or not resp.get("ok"):
         print(json.dumps({"ok": False, "stage": "audio", "status": status, "resp": resp}))
         return
-    _append_and_upload(mid, text, f"audio/{mid}.mp3")
+    _append_and_upload(mid, text, f"audio/{name}")
 
+@serialized
 def cmd_post(mid, text):
     _append_and_upload(mid, text, None)
 
+@serialized
 def cmd_sync():
     q = load_queue()
     status, resp = upload_queue(q)
     print(json.dumps({"ok": status == 200 and resp.get("ok"), "status": status, "resp": resp}))
 
+@serialized
 def cmd_history(path):
     with open(path, encoding="utf-8") as f:
         hist = json.load(f)
@@ -184,6 +228,7 @@ def cmd_history(path):
             f.write("\n")
     print(json.dumps({"ok": ok, "status": status, "resp": resp}))
 
+@serialized
 def cmd_history_append():
     """Append the current local queue as a run in history.json and upload.
 
@@ -217,12 +262,13 @@ def cmd_history_append():
             f.write("\n")
     print(json.dumps({"ok": ok, "status": status, "session": session, "messages": len(msgs)}))
 
+@serialized
 def cmd_cleanup(min_age_sec):
     body = json.dumps({"min_age_sec": min_age_sec}).encode("utf-8")
     status, resp = post("op=cleanup", body, "application/json")
     print(json.dumps({"ok": status == 200 and resp.get("ok"), "status": status, "resp": resp}))
 
-if __name__ == "__main__":
+def main():
     cmd = sys.argv[1]
     if cmd == "init":
         cmd_init(sys.argv[2])
@@ -240,3 +286,11 @@ if __name__ == "__main__":
         cmd_history_append()
     else:
         sys.exit(f"unknown command: {cmd}")
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except Exception as error:
+        print(json.dumps({"ok": False, **error_info(error, "publisher")}))
+        sys.exit(1)

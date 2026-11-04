@@ -15,6 +15,7 @@ Usage:
   session_watcher.py [--config coach_config.json] [--interval 20]
                      [--once] [--dry-run]
 """
+from delivery import publisher_call
 import argparse, datetime, json, os, pathlib, subprocess, sys, time
 from runtime import private_dir, private_append, write_json, error_info, read_state, valid_session, file_lock, lock_busy
 import urllib.request, urllib.error
@@ -115,13 +116,9 @@ class Watcher:
                 prev.rename(self.state_dir / "poll_state_prev.json")
             pub = self.cfg["publish_script"]
             for cmd in (["init", qsession], ["sync"]):
-                r = subprocess.run(["python3", pub, *cmd], capture_output=True, text=True, timeout=60)
-                try:
-                    ok = r.returncode == 0 and json.loads(r.stdout).get("ok") is True
-                except (ValueError, AttributeError):
-                    ok = False
-                if not ok:
-                    log(f"queue initialization failed stage={cmd[0]} rc={r.returncode}")
+                result = publisher_call(self.cfg, *cmd)
+                if not result["ok"]:
+                    log(f"queue initialization failed stage={cmd[0]} rc={result.get('returncode')}")
                     return False
             write_json(self.state_dir / "last_session_mail.json", {"mail_id": sess.get("mail_id", "")})
             write_json(self.session_path(), {

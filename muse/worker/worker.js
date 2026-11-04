@@ -53,11 +53,17 @@ function checkToken(request, env) {
 
 async function readQueue(env) {
   const obj = await env.QUEUE_BUCKET.get("queue.json");
-  if (obj === null) return { session: "standby", messages: [] };
+  if (obj === null) throw new Error("queue unavailable");
   try {
-    return JSON.parse(await obj.text());
+    const queue = JSON.parse(await obj.text());
+    if (!queue || !Array.isArray(queue.messages) || typeof queue.session !== "string"
+        || queue.messages.some(m => !m || typeof m.id !== "string"
+          || !(m.audio === null || typeof m.audio === "string"))) {
+      throw new Error("invalid queue");
+    }
+    return queue;
   } catch {
-    return { session: "standby", messages: [] };
+    throw new Error("queue unreadable");
   }
 }
 
@@ -207,11 +213,13 @@ export default {
         let minAgeSec = 3600;
         try {
           const body = await request.json();
-          if (typeof body.min_age_sec === "number") minAgeSec = body.min_age_sec;
+          if (Number.isFinite(body.min_age_sec)) minAgeSec = Math.max(300, body.min_age_sec);
         } catch {
           // body 省略時はデフォルトの猶予を使う
         }
-        const queue = await readQueue(env);
+        let queue;
+        try { queue = await readQueue(env); }
+        catch { return json(409, { ok: false, error: "cleanup requires a valid queue" }); }
         const referenced = new Set(
           (queue.messages || []).map((m) => m.audio).filter(Boolean)
         );
@@ -223,6 +231,13 @@ export default {
           for (const obj of page.objects) {
             if (referenced.has(obj.key)) continue;
             if (obj.uploaded.getTime() > cutoff) continue;
+            // Recheck both references and upload age after listing.
+            let latest;
+            try { latest = await readQueue(env); }
+            catch { return json(409, { ok: false, error: "queue changed or unreadable" }); }
+            if (latest.messages.some(m => m.audio === obj.key)) continue;
+            const head = await env.QUEUE_BUCKET.head(obj.key);
+            if (!head || head.uploaded.getTime() > cutoff) continue;
             await env.QUEUE_BUCKET.delete(obj.key);
             deleted.push(obj.key);
           }

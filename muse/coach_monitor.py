@@ -59,6 +59,7 @@ import subprocess
 import time
 from collections import deque
 from configuration import validate_config
+from delivery import publisher_call
 from runtime import private_dir, private_append, write_json, error_info, read_state, valid_session, file_lock
 
 DIGITS_JP = {"0": "ゼロ", "1": "いち", "2": "に", "3": "さん", "4": "よん",
@@ -180,13 +181,9 @@ class Monitor:
         return json.loads(r.stdout)
 
     def publish(self, *args):
-        r = subprocess.run(["python3", self.cfg["publish_script"], *args],
-                           capture_output=True, text=True, timeout=120)
-        # Keep the publisher's own words for the log: when a send fails,
-        # its stdout names the failing stage (tts / audio / queue), which
-        # is the only way to tell a transient blip from a real breakage.
-        self.last_publish_out = ((r.stdout or "") + (r.stderr or "")).strip()[:300]
-        return '"ok": true' in (r.stdout or "")
+        result = publisher_call(self.cfg, *args)
+        self.last_publish_out = json.dumps(result)
+        return result["ok"]
 
     def publish_retry(self, *args, attempts=3):
         backoff = float(self.cfg.get("say_retry_backoff_sec", 5))
