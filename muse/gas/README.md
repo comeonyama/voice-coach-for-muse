@@ -12,12 +12,13 @@ iOS アプリからのキックで起動するのが本線。Muse は検知の�
 1. https://script.google.com を開き、新しいプロジェクトを作成。
    名前は「VCM LiveTrack Detector」など。
 2. `livetrack_detector.gs` の内容をすべて貼り付けて保存。
-3. 左メニュー「プロジェクトの設定」→「スクリプト プロパティ」で追加:
+3. 左メニュー「プロジェクトの設定」→「スクリプト プロパティ」で以下の必須プロパティを追加:
    - `KICK_SECRET`: キック用の合言葉。自分でランダムな文字列を決める
      (アプリ側の設定にも同じ値を入れる)
    - `UPLOAD_TOKEN`: Worker の secret (UPLOAD_TOKEN) と同じ値
-   - `WORKER_BASE`: 任意。省略時はコード内の既定値
-     (`https://vcm-queue.example.workers.dev` — 自分の Worker の URL に変更すること)
+   - `WORKER_BASE`: 自分の Worker の URL を設定すること（必須）。
+     未設定・空白の場合は `WORKER_BASE is not set` エラーとなり、
+     キックへの応答は `ok:false` と理由を返す。実行ログにも理由を記録する。
 4. エディタで関数 `findAndPost_` を一度実行し、Gmail と外部接続の
    権限承認を済ませる (開始メールが無ければ {ok:true, found:false} が
    ログに出れば正常)。
@@ -27,6 +28,8 @@ iOS アプリからのキックで起動するのが本線。Muse は検知の�
    デプロイ後に表示される **/exec の URL** を控える (アプリ設定に入れる)。
    コードを直したら「デプロイを管理」から既存デプロイを編集して
    バージョン更新すると URL が変わらない。
+   **新しいデプロイで /exec URL が変わった場合は、iOS アプリの
+   「検知スクリプト URL」も必ず新しい URL に更新すること。**
 6. アプリ側の設定に、/exec の URL と KICK_SECRET を登録する。
 
 ## 任意: フォールバックの定期チェック

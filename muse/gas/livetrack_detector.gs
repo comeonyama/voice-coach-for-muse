@@ -13,7 +13,7 @@
  * スクリプトプロパティ (プロジェクトの設定 > スクリプト プロパティ):
  *   KICK_SECRET   : アプリからのキック用シークレット (自分で決める)
  *   UPLOAD_TOKEN  : Worker の secret と同じ値
- *   WORKER_BASE   : 任意。既定 https://vcm-queue.example.workers.dev
+ *   WORKER_BASE   : 必須。自分の Worker の URL を設定すること
  */
 
 var URL_RE = /livetrack\.garmin\.com\/session\/([0-9a-fA-F-]{36})\/token\/([0-9a-fA-F]+)/;
@@ -26,7 +26,12 @@ function props_() {
 }
 
 function workerBase_() {
-  return props_().getProperty('WORKER_BASE') || 'https://vcm-queue.example.workers.dev';
+  var base = (props_().getProperty('WORKER_BASE') || '').trim();
+  if (!base) {
+    Logger.log('WORKER_BASE is not set');
+    throw new Error('WORKER_BASE is not set');
+  }
+  return base;
 }
 
 function jsonOut_(obj) {
@@ -42,6 +47,7 @@ function doGet(e) {
     return jsonOut_({ ok: false, error: 'unauthorized' });
   }
   try {
+    workerBase_(); // メールの有無や処理済み判定に関係なく設定漏れを通知する
     return jsonOut_(findAndPost_());
   } catch (err) {
     return jsonOut_({ ok: false, error: String(err) });
@@ -50,6 +56,7 @@ function doGet(e) {
 
 /** 時間主導トリガー用のフォールバック (任意)。 */
 function scheduledCheck() {
+  workerBase_();
   findAndPost_();
 }
 
