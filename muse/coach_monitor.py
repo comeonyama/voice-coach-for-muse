@@ -25,7 +25,10 @@ The agent (e.g. Muse) supplies, per run:
 
 Delivery mode (config "audio", default true):
   - true: messages go through the publisher's "say" command and carry
-    an MP3 synthesized on the agent side.
+    an MP3 synthesized on the agent side. If "say" fails after all
+    retries, the same message falls back to a text-only "post"
+    (config "tts_fallback", default true) so the app can speak it
+    with on-device TTS instead of losing it (decided 2026-11-04).
   - false: messages go through the publisher's "post" command as text
     only (audio: null); the receiver app speaks them with on-device
     TTS. Match this with the app's playback-mode setting for the run.
@@ -218,8 +221,17 @@ class Monitor:
                           "out": getattr(self, "last_publish_out", "")})
                 time.sleep(backoff)
                 backoff *= 2
+        fallback = False
+        if not ok and verb == "say" and self.cfg.get("tts_fallback", True):
+            # The MP3 path failed end to end (TTS, audio upload, or
+            # queue). Deliver the same text with audio: null instead,
+            # so the app speaks it with on-device TTS and the message
+            # is not lost (decided 2026-11-04).
+            fallback = True
+            ok = self.publish_retry("post", mid, text,
+                                    attempts=max(1, attempts))
         self.log({"event": "say", "id": mid, "ok": ok, "mode": verb,
-                  "text": text, "attempts": tried})
+                  "text": text, "attempts": tried, "fallback": fallback})
         return ok
 
     # ---------- message composition ----------
