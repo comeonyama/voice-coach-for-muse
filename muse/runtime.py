@@ -1,4 +1,5 @@
 """Private, atomic runtime state and credential-safe error summaries."""
+from contextlib import contextmanager
 import json
 import os
 from pathlib import Path
@@ -40,3 +41,50 @@ def error_info(error, stage):
     # Never stringify exceptions: subprocess exceptions embed argv credentials.
     return {"stage": stage, "error_type": type(error).__name__,
             "returncode": getattr(error, "returncode", None)}
+
+
+def read_state(path, default=None, valid=None):
+    """Recover missing/invalid state without logging its potentially private data."""
+    path = Path(path)
+    try:
+        with path.open(encoding="utf-8") as stream:
+            value = json.load(stream)
+        if not isinstance(value, dict) or (valid is not None and not valid(value)):
+            raise ValueError("invalid state")
+        path.chmod(0o600)
+        return value
+    except FileNotFoundError:
+        return default
+    except (ValueError, TypeError, UnicodeError):
+        import uuid
+        path.chmod(0o600)
+        path.replace(path.with_name(path.name + ".corrupt-" + uuid.uuid4().hex))
+        return default
+
+
+def valid_session(value):
+    return all(isinstance(value.get(key), str) and value[key]
+               for key in ("session_id", "token"))
+
+
+@contextmanager
+def file_lock(path, blocking=True):
+    import fcntl
+    path = Path(path)
+    private_dir(path.parent)
+    fd = os.open(path, os.O_CREAT | os.O_RDWR, 0o600)
+    try:
+        os.fchmod(fd, 0o600)
+        flags = fcntl.LOCK_EX | (0 if blocking else fcntl.LOCK_NB)
+        fcntl.flock(fd, flags)
+        yield
+    finally:
+        os.close(fd)
+
+
+def lock_busy(path):
+    try:
+        with file_lock(path, blocking=False):
+            return False
+    except BlockingIOError:
+        return True

@@ -50,7 +50,7 @@ import tempfile
 import urllib.request
 import urllib.error
 from datetime import datetime, timezone
-from runtime import private_dir, error_info
+from runtime import private_dir, error_info, read_state
 
 BASE = "https://livetrack.garmin.com"
 UA = {"User-Agent": "Mozilla/5.0 (Voice Coach for Muse livetrack poller)", "Accept": "application/json"}
@@ -147,14 +147,11 @@ def main():
         "points_total": 0,
         "last_point_ts": None,
     }
-    if os.path.exists(args.state):
-        try:
-            with open(args.state, encoding="utf-8") as fh:
-                saved = json.load(fh)
-            if saved.get("session_id") == args.session_id:
-                state.update(saved)
-        except Exception:
-            pass
+    saved = read_state(args.state, {}, valid=lambda value:
+                       isinstance(value.get("session_id"), str)
+                       and isinstance(value.get("last_point"), (dict, type(None))))
+    if saved.get("session_id") == args.session_id:
+        state.update(saved)
 
     out = {"ok": False}
 

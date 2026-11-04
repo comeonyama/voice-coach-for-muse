@@ -99,11 +99,11 @@ function findAndPost_() {
   if (!newest) return { ok: true, found: false };
 
   var mid = newest.msg.getId();
-  if (mid === lastMailId) {
-    return { ok: true, found: true, already: true, session_id: lastSessionId };
-  }
   if (Date.now() - newest.msg.getDate().getTime() > MAX_MAIL_AGE_MIN * 60 * 1000) {
     return { ok: true, found: false };
+  }
+  if (mid === lastMailId) {
+    return { ok: true, found: true, already: true, session_id: lastSessionId };
   }
 
   var payload = {

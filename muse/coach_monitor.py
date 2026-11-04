@@ -59,7 +59,7 @@ import subprocess
 import time
 from collections import deque
 from configuration import validate_config
-from runtime import private_dir, private_append, write_json, error_info
+from runtime import private_dir, private_append, write_json, error_info, read_state, valid_session, file_lock
 
 DIGITS_JP = {"0": "ゼロ", "1": "いち", "2": "に", "3": "さん", "4": "よん",
              "5": "ご", "6": "ろく", "7": "なな", "8": "はち", "9": "きゅう"}
@@ -130,7 +130,8 @@ class Monitor:
         self.last_dist = 0.0
         self.last_dur = 0
         try:
-            ps = json.loads((self.state_dir / "poll_state.json").read_text())
+            ps = read_state(self.state_dir / "poll_state.json", {},
+                            valid=lambda value: value.get("session_id") == session["session_id"])
             lp = ps.get("last_point") or {}
             if lp.get("dist_m"):
                 self.last_dist = float(lp["dist_m"]) / 1000.0
@@ -460,7 +461,9 @@ def main():
     args = ap.parse_args()
 
     cfg = json.loads(pathlib.Path(args.config).read_text())
-    session = json.loads(pathlib.Path(args.session).read_text())
+    session = read_state(args.session, valid=valid_session)
+    if session is None:
+        ap.error("session file is missing or invalid; invalid files are quarantined")
     neta = json.loads(pathlib.Path(args.neta).read_text()) if args.neta else []
     stock = {"tips": [], "motivational": []}
     stock_path = args.stock or cfg.get("stock_file")
@@ -470,7 +473,11 @@ def main():
         mon = Monitor(cfg, session, neta, stock)
     except ValueError as e:
         ap.error(str(e))
-    raise SystemExit(mon.run())
+    try:
+        with file_lock(mon.state_dir / ".monitor.lock", blocking=False):
+            raise SystemExit(mon.run())
+    except BlockingIOError:
+        ap.error("another monitor owns this state directory")
 
 
 if __name__ == "__main__":

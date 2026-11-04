@@ -16,7 +16,7 @@ Usage:
                      [--once] [--dry-run]
 """
 import argparse, datetime, json, os, pathlib, subprocess, sys, time
-from runtime import private_dir, private_append, write_json, error_info
+from runtime import private_dir, private_append, write_json, error_info, read_state, valid_session, file_lock, lock_busy
 import urllib.request, urllib.error
 
 sys.path.insert(0, "/opt/muse/skills/custom-connector-setup/bin")
@@ -58,10 +58,7 @@ def fetch_session():
 
 
 def load_watcher_state():
-    try:
-        return json.loads(WATCHER_STATE.read_text())
-    except Exception:
-        return {}
+    return read_state(WATCHER_STATE, {})
 
 
 def save_watcher_state(st):
@@ -81,18 +78,13 @@ class Watcher:
         self.cfg = json.loads(pathlib.Path(args.config).read_text())
         self.state_dir = pathlib.Path(self.cfg["state_dir"])
         self.monitor_proc = None
+        private_dir(self.state_dir)
 
     def session_path(self):
         return self.state_dir / "session.json"
 
     def leftover_live(self, fetched_id):
-        p = self.session_path()
-        if not p.exists():
-            return False
-        try:
-            cur = json.loads(p.read_text())
-        except Exception:
-            return False
+        cur = read_state(self.session_path(), {}, valid=valid_session)
         return cur.get("state") == "live" and cur.get("session_id") != fetched_id
 
     def try_finalize(self):
@@ -106,7 +98,7 @@ class Watcher:
                            capture_output=True, text=True, timeout=300)
         log(f"finalize_run rc={r.returncode} out={(r.stdout or '').strip()[-200:]} err={(r.stderr or '').strip()[-200:]}")
 
-    def launch(self, sess, dry_run):
+    def launch(self, sess, dry_run, resume=False):
         sid = sess["session_id"]
         received = parse_ts(sess.get("received_at", ""))
         qdate = (received.astimezone(JST) if received else datetime.datetime.now(JST))
@@ -117,31 +109,39 @@ class Watcher:
         if dry_run:
             log(f"DRY-RUN would launch monitor for session={sid} queue={qsession}")
             return True
-        # mirror run_watch.py's post-detection preparation
-        prev = self.state_dir / "poll_state.json"
-        if prev.exists():
-            prev.rename(self.state_dir / "poll_state_prev.json")
-        write_json(self.state_dir / "last_session_mail.json", {"mail_id": sess.get("mail_id", "")})
-        write_json(self.session_path(), {
-            "session_id": sid, "token": sess["token"],
-            "mail_id": sess.get("mail_id", ""), "state": "live",
-            "started_mail_at": sess.get("received_at", ""),
-            "source": "session_watcher",
-        })
-        pub = self.cfg["publish_script"]
-        for cmd in (["init", qsession], ["sync"]):
-            r = subprocess.run(["python3", pub, *cmd],
-                               capture_output=True, text=True, timeout=60)
-            log(f"publish {' '.join(cmd)} rc={r.returncode} {(r.stdout or '').strip()[:120]}")
+        if not resume:
+            prev = self.state_dir / "poll_state.json"
+            if prev.exists():
+                prev.rename(self.state_dir / "poll_state_prev.json")
+            pub = self.cfg["publish_script"]
+            for cmd in (["init", qsession], ["sync"]):
+                r = subprocess.run(["python3", pub, *cmd], capture_output=True, text=True, timeout=60)
+                try:
+                    ok = r.returncode == 0 and json.loads(r.stdout).get("ok") is True
+                except (ValueError, AttributeError):
+                    ok = False
+                if not ok:
+                    log(f"queue initialization failed stage={cmd[0]} rc={r.returncode}")
+                    return False
+            write_json(self.state_dir / "last_session_mail.json", {"mail_id": sess.get("mail_id", "")})
+            write_json(self.session_path(), {
+                "session_id": sid, "token": sess["token"],
+                "mail_id": sess.get("mail_id", ""), "state": "live",
+                "started_mail_at": sess.get("received_at", ""), "source": "session_watcher",
+            })
+        st = load_watcher_state()
+        retries = st.get("retries", 0) if resume else 0
+        st.update(launched_session_id=sid, status="starting", retries=retries,
+                  launched_at=datetime.datetime.now(JST).isoformat(timespec="seconds"))
+        save_watcher_state(st)
         logf = private_append(self.state_dir / "monitor_auto.log")
         self.monitor_proc = subprocess.Popen(
             ["python3", self.args.monitor, "--config", self.args.config,
              "--session", str(self.session_path())],
             stdout=logf, stderr=subprocess.STDOUT, start_new_session=True)
         log(f"monitor launched pid={self.monitor_proc.pid} session={sid} queue={qsession}")
-        st = load_watcher_state()
-        st["launched_session_id"] = sid
-        st["launched_at"] = datetime.datetime.now(JST).isoformat(timespec="seconds")
+        logf.close()
+        st["status"] = "running"
         save_watcher_state(st)
         return True
 
@@ -152,16 +152,39 @@ class Watcher:
                 return  # a run is in progress; do not start another
             log(f"monitor exited rc={rc}")
             self.monitor_proc = None
+            st = load_watcher_state()
+            st["status"] = "complete" if rc == 0 else "failed"
+            save_watcher_state(st)
+        if lock_busy(self.state_dir / ".monitor.lock"):
+            return
         status, sess = fetch_session()
         if status == 404:
             log("no session posted")
             return
         if status != 200 or not isinstance(sess, dict) or "session_id" not in sess:
-            log(f"session fetch unexpected: status={status} body={str(sess)[:160]}")
+            log(f"session fetch unexpected: status={status}")
             return
         sid = sess["session_id"]
-        if load_watcher_state().get("launched_session_id") == sid:
-            log(f"session {sid} already launched")
+        if not valid_session(sess):
+            log("session shape invalid")
+            return
+        st = load_watcher_state()
+        if st.get("launched_session_id") == sid:
+            local = read_state(self.session_path(), {}, valid=valid_session)
+            if st.get("status") == "complete" or local.get("state") == "closed":
+                return
+            retries = st.get("retries", 0)
+            if not isinstance(retries, int) or retries >= 3:
+                log("monitor restart limit reached")
+                return
+            if self.args.dry_run:
+                log("DRY-RUN would retry monitor")
+                return
+            st["retries"] = retries + 1
+            save_watcher_state(st)
+            if not local:
+                write_json(self.session_path(), dict(sess, state="live"))
+            self.launch(sess, False, resume=True)
             return
         received = parse_ts(sess.get("received_at", ""))
         if received is None:
@@ -172,6 +195,9 @@ class Watcher:
             log(f"session {sid} is stale ({age_min:.0f} min old); ignoring")
             return
         if self.leftover_live(sid):
+            if self.args.dry_run:
+                log("DRY-RUN would finalize previous session")
+                return
             self.try_finalize()
             if self.leftover_live(sid):
                 log("previous session still live after finalize attempt; waiting")
@@ -189,6 +215,11 @@ def main():
     args = ap.parse_args()
     w = Watcher(args)
     log(f"watcher start (interval={args.interval}s once={args.once} dry_run={args.dry_run})")
+    with file_lock(w.state_dir / ".watcher.lock", blocking=False):
+        watch(w, args)
+
+
+def watch(w, args):
     while True:
         try:
             w.cycle()

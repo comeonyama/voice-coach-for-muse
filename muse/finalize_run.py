@@ -19,7 +19,7 @@ Usage:
   finalize_run.py --config coach_config.json [--dry-run] [--force]
 """
 import argparse
-from runtime import private_dir, private_append, write_json, error_info
+from runtime import private_dir, private_append, write_json, error_info, read_state, valid_session
 import datetime
 import json
 import pathlib
@@ -76,12 +76,15 @@ def main():
     cfg = json.loads(pathlib.Path(args.config).read_text())
     state = pathlib.Path(cfg["state_dir"])
     sess_path = state / "session.json"
-    sess = json.loads(sess_path.read_text())
+    sess = read_state(sess_path, valid=valid_session)
+    if sess is None:
+        print("no valid session to finalize")
+        return 0
     if sess.get("state") != "live":
         print(f"nothing to do: session state is {sess.get('state')!r}")
         return 0
     ps_path = state / "poll_state.json"
-    ps = json.loads(ps_path.read_text()) if ps_path.exists() else {}
+    ps = read_state(ps_path, {}, valid=lambda value: isinstance(value.get("last_point"), (dict, type(None))))
     lp = ps.get("last_point") or {}
     dist = float(lp.get("dist_m") or 0) / 1000.0
     dur = lp.get("dur_s") or 0
@@ -89,6 +92,9 @@ def main():
         # No data to recover a closing from. Still close the state:
         # leaving it "live" makes the session watcher retry forever and
         # blocks the next run's automatic start.
+        if args.dry_run:
+            print("dry-run: would close session without track points")
+            return 0
         sess["state"] = "closed"
         sess["closed_by"] = "finalize_run"
         sess["closed_at"] = datetime.datetime.now(
