@@ -17,6 +17,8 @@ final class ReceiverModel: NSObject, ObservableObject {
     @Published var timeoutMinutes: Int { didSet { defaults.set(timeoutMinutes, forKey: "timeoutMinutes") } }
     private var timeoutTask: Task<Void, Never>?
     private var stoppingForTimeout = false
+    private let coachingSpeaker = AVSpeechSynthesizer()
+    private var coachingUtterance: AVSpeechUtterance?
     private let speaker = AVSpeechSynthesizer()
     private var finalAnnouncement: AVSpeechUtterance?
     private var offline = false
@@ -122,6 +124,8 @@ final class ReceiverModel: NSObject, ObservableObject {
         configuration.timeoutIntervalForResource = 10
         configuration.waitsForConnectivity = false
         network = URLSession(configuration: configuration)
+        coachingSpeaker.delegate = self
+        coachingSpeaker.usesApplicationAudioSession = true
         speaker.delegate = self
         speaker.usesApplicationAudioSession = false
         logs = defaults.stringArray(forKey: "playbackDiagnostics") ?? []
@@ -227,6 +231,7 @@ final class ReceiverModel: NSObject, ObservableObject {
         running = false; runToken = UUID()
         pollTask?.cancel(); pollTask = nil
         playbackTask?.cancel()
+        coachingSpeaker.stopSpeaking(at: .immediate)
         player?.stop()
         if let current { setStatus(current, "停止（未完了）") }
         resolvePlayback(false)
@@ -242,11 +247,8 @@ final class ReceiverModel: NSObject, ObservableObject {
         guard !busy, pending.isEmpty, !interruptionActive, !offline, !stoppingForTimeout else {
             notice = "音声の再生や一時停止が終わってからお試しください。"; return
         }
-        guard let url = Bundle.main.url(forResource: "test-coaching", withExtension: "mp3") ?? Bundle.main.url(forResource: "test-tone", withExtension: "mp3") else {
-            log("再生エラー", "同梱MP3がありません"); return
-        }
-        let message = CoachingMessage(id: "test", ts: ISO8601DateFormatter().string(from: Date()), audio: "", text: "音声を確認しています。音楽の音量が下がり、終了後に元に戻るか確認してください。")
-        pending.append(PlaybackItem(message: message, key: nil, url: url))
+        let message = CoachingMessage(id: "test", ts: ISO8601DateFormatter().string(from: Date()), audio: nil, text: "音声を確認しています。音楽の音量が下がり、終了後に元に戻るか確認してください。")
+        pending.append(PlaybackItem(message: message, key: nil, url: nil))
         drain()
     }
 
@@ -304,15 +306,14 @@ final class ReceiverModel: NSObject, ObservableObject {
                     receivedNew = true
                     let status: String
                     if firstSync { status = "再生済み" }
-                    else if message.audio == nil { status = "音声なし" }
                     else if newlySkipped { status = "スキップ（時間経過）" }
                     else { status = ledger.played.contains(key) ? "再生済み" : "待機中" }
                     history.insert(HistoryEntry(id: key, message: message, status: status), at: 0)
                 }
-                guard let audio = message.audio, ledger.accept(key) else { continue }
+                guard ledger.accept(key) else { continue }
                 log("新規メッセージ検出", message.id)
                 if current == nil { latestText = message.text }
-                let item = PlaybackItem(message: message, key: key, url: QueueURL.audio(audio, relativeTo: source))
+                let item = PlaybackItem(message: message, key: key, url: message.audio.flatMap { QueueURL.audio($0, relativeTo: source) })
                 setStatus(item, "待機中")
                 pending.append(item)
             }
@@ -357,6 +358,7 @@ final class ReceiverModel: NSObject, ObservableObject {
                 }
                 if let current {
                     waitingHead = nil
+                    guard coachingUtterance == nil else { continue }
                     guard let attemptTask, !attemptTask.isCancelled else { continue }
                     if let player, player.currentTime > lastAudioPosition {
                         lastAudioPosition = player.currentTime
@@ -366,6 +368,7 @@ final class ReceiverModel: NSObject, ObservableObject {
                         log("再生監視", "\(current.message.id) / 15秒間進行なし・再初期化")
                         watchdogExpired = true
                         attemptTask.cancel()
+                        coachingSpeaker.stopSpeaking(at: .immediate)
                         player?.stop()
                         resolvePlayback(false)
                         if speaker.isSpeaking { speaker.stopSpeaking(at: .immediate) }
@@ -377,6 +380,7 @@ final class ReceiverModel: NSObject, ObservableObject {
                         log("再生監視", "\(head.message.id) / 待機中のポンプを再起動")
                         pumpGeneration = UUID()
                         playbackTask?.cancel(); playbackTask = nil
+                        coachingSpeaker.stopSpeaking(at: .immediate)
                         player?.stop(); player = nil; releaseAudio()
                         waitingSince = now
                     }
@@ -464,6 +468,7 @@ final class ReceiverModel: NSObject, ObservableObject {
             pending.insert(item, at: 0)
             setStatus(item, "待機中")
         }
+        coachingSpeaker.stopSpeaking(at: .immediate)
         player?.stop()
         resolvePlayback(false)
         releaseAudio()
@@ -471,10 +476,9 @@ final class ReceiverModel: NSObject, ObservableObject {
 
     private func recoverBacklog(source: URL, session: String) {
         for entry in history where entry.id.source == source.absoluteString && entry.id.session == session && entry.status == "再生エラー" {
-            if let audio = entry.message.audio {
-                pending.append(PlaybackItem(message: entry.message, key: entry.id, url: QueueURL.audio(audio, relativeTo: source)))
-            }
+            pending.append(PlaybackItem(message: entry.message, key: entry.id, url: entry.message.audio.flatMap { QueueURL.audio($0, relativeTo: source) }))
         }
+
         let latest = pending.filter { $0.key?.session == session && $0.key?.source == source.absoluteString }
             .sorted { ($0.message.timestamp ?? .distantPast) < ($1.message.timestamp ?? .distantPast) }.last
         for item in pending where item.id != latest?.id {
@@ -494,9 +498,9 @@ final class ReceiverModel: NSObject, ObservableObject {
     func retry(_ entry: HistoryEntry) {
         guard !offline, !stoppingForTimeout,
               history.first(where: { $0.id == entry.id })?.status == "再生エラー",
-              let source = URL(string: entry.id.source), let audio = entry.message.audio else { return }
+              let source = URL(string: entry.id.source) else { return }
         _ = ledger.accept(entry.id)
-        let item = PlaybackItem(message: entry.message, key: entry.id, url: QueueURL.audio(audio, relativeTo: source), manualRetry: true)
+        let item = PlaybackItem(message: entry.message, key: entry.id, url: entry.message.audio.flatMap { QueueURL.audio($0, relativeTo: source) }, manualRetry: true)
         setStatus(item, "待機中")
         pending.append(item)
         updateCount(); drain()
@@ -511,7 +515,10 @@ final class ReceiverModel: NSObject, ObservableObject {
                 lastAudioPosition = 0
                 watchdogExpired = false
                 setStatus(item, "読み込み中")
-                let attempt = Task { try await self.playMP3(item) }
+                let attempt = Task {
+                    if item.message.audio == nil { return try await self.playSpeech(item) }
+                    return try await self.playMP3(item)
+                }
                 attemptTask = attempt
                 defer { attemptTask = nil }
                 let success = try await withTaskCancellationHandler {
@@ -528,8 +535,9 @@ final class ReceiverModel: NSObject, ObservableObject {
                 var diagnostics = defaults.stringArray(forKey: "playbackDiagnostics") ?? []
                 if let last = logs.last { diagnostics.append(last) }
                 defaults.set(Array(diagnostics.suffix(100)), forKey: "playbackDiagnostics")
+                coachingSpeaker.stopSpeaking(at: .immediate)
                 player?.stop(); player = nil; releaseAudio()
-                guard !item.isTest, attempt < 4 else { throw error }
+                guard item.message.audio != nil, !item.isTest, attempt < 4 else { throw error }
                 if attempt < delays.count {
                     setStatus(item, "再試行中")
                     try await Task.sleep(for: .seconds(delays[attempt]))
@@ -545,6 +553,37 @@ final class ReceiverModel: NSObject, ObservableObject {
                     // playMP3 creates a fresh player and reactivates the session.
                 }
             }
+        }
+    }
+
+    private func playSpeech(_ item: PlaybackItem) async throws -> Bool {
+        try Task.checkCancellation()
+        while paused || interruptionActive || speaker.isSpeaking {
+            try await Task.sleep(for: .milliseconds(200))
+        }
+        let speech = AVSpeechUtterance(string: item.message.text)
+        speech.voice = AVSpeechSynthesisVoice(language: "ja-JP")
+        speech.rate = AVSpeechUtteranceDefaultSpeechRate
+        try activateAudio()
+        coachingUtterance = speech
+        let deadline = Task {
+            do { try await Task.sleep(for: .seconds(30)) } catch { return }
+            guard coachingUtterance === speech else { return }
+            log("再生監視", "\(item.message.id) / 読み上げが30秒以内に完了しませんでした")
+            coachingSpeaker.stopSpeaking(at: .immediate)
+            resolvePlayback(false)
+        }
+        defer {
+            deadline.cancel()
+            coachingUtterance = nil
+            coachingSpeaker.stopSpeaking(at: .immediate)
+            releaseAudio()
+        }
+        return await withCheckedContinuation { continuation in
+            completion = continuation
+            setStatus(item, "再生中")
+            log("読み上げ開始", item.message.id)
+            coachingSpeaker.speak(speech)
         }
     }
 
@@ -609,6 +648,10 @@ final class ReceiverModel: NSObject, ObservableObject {
         guard !interruptionActive else { notice = "電話などの割り込み終了後に再開できます。"; return }
         resumeAllowed = true
         do {
+            if coachingUtterance != nil, completion != nil {
+                try activateAudio()
+                coachingSpeaker.continueSpeaking()
+            }
             if let player, completion != nil {
                 try activateAudio()
                 guard player.play() else { throw ReceiverError.message("割り込み後の再開失敗") }
@@ -633,7 +676,7 @@ final class ReceiverModel: NSObject, ObservableObject {
                 guard let self else { return }
                 self.log("出力経路変更", "reason=\(reason ?? 0)")
                 if reason == AVAudioSession.RouteChangeReason.oldDeviceUnavailable.rawValue, self.busy {
-                    self.paused = true; self.resumeAllowed = false; self.player?.pause(); self.releaseAudio()
+                    self.paused = true; self.resumeAllowed = false; self.player?.pause(); self.coachingSpeaker.pauseSpeaking(at: .immediate); self.releaseAudio()
                     self.notice = "イヤホン接続が切れました。接続を確認して「音声を再開」を押してください。"
                 }
             }
@@ -652,10 +695,11 @@ final class ReceiverModel: NSObject, ObservableObject {
         guard let type, let kind = AVAudioSession.InterruptionType(rawValue: type) else { return }
         if kind == .began {
             if !interruptionActive {
-                interruptedPlayback = player != nil && completion != nil
+                interruptedPlayback = (player != nil || coachingUtterance != nil) && completion != nil
                 resumeAllowed = !paused
             }
             interruptionActive = true; paused = true
+            coachingSpeaker.pauseSpeaking(at: .immediate)
             player?.pause(); sessionActive = false; audioStatus = "割り込み中（OSが無効化）"
             log("割り込み開始", current?.message.id ?? "待機中")
         } else {
@@ -708,9 +752,16 @@ final class ReceiverModel: NSObject, ObservableObject {
 extension ReceiverModel: AVSpeechSynthesizerDelegate {
     nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
         Task { @MainActor in
+            if self.coachingUtterance === utterance { self.resolvePlayback(true) }
             if self.finalAnnouncement === utterance { self.stop() }
         }
     }
+    nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didCancel utterance: AVSpeechUtterance) {
+        Task { @MainActor in
+            if self.coachingUtterance === utterance { self.resolvePlayback(false) }
+        }
+    }
+
 }
 
 extension ReceiverModel: AVAudioPlayerDelegate {
