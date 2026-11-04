@@ -49,16 +49,19 @@ function doGet(e) {
   }
   try {
     workerBase_(); // メールの有無や処理済み判定に関係なく設定漏れを通知する
-    return jsonOut_(findAndPost_());
+    return jsonOut_(findAndPost_(e.parameter.sid, e.parameter.since));
   } catch (err) {
-    return jsonOut_({ ok: false, error: String(err) });
+    var message = err && err.message;
+    var safe = ['WORKER_BASE is not set', 'sid must be a UUID', 'since must be ISO 8601 UTC',
+                'PROCESSED_MAIL_IDS must be a JSON array of message IDs'];
+    return jsonOut_({ ok: false, error: safe.indexOf(message) >= 0 ? message : 'detection failed; retry later' });
   }
 }
 
 /** 時間主導トリガー用のフォールバック (任意)。 */
 function scheduledCheck() {
   workerBase_();
-  findAndPost_();
+  throw new Error("sid and since are required; use the app kick");
 }
 
 /** メール本文 (HTML) から session_id / token を取り出す。 */
@@ -84,8 +87,22 @@ function extract_(html) {
 }
 
 /** Gmail を検索し、未処理の開始メールがあれば Worker へ渡す。 */
-function findAndPost_() {
+function findAndPost_(sid, since) {
+  var lock = LockService.getScriptLock();
+  lock.waitLock(10000);
+  try { return findAndPostLocked_(sid, since); }
+  finally { lock.releaseLock(); }
+}
+
+function findAndPostLocked_(sid, since) {
+  if (typeof sid !== 'string' || !/^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(sid))
+    throw new Error('sid must be a UUID');
+  if (typeof since !== 'string' || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/.test(since) || !isFinite(Date.parse(since)))
+    throw new Error('since must be ISO 8601 UTC');
+  var base = workerBase_();
   var p = props_();
+  if (p.getProperty('LAST_START_ID') === sid && p.getProperty('LAST_START_SESSION_ID'))
+    return { ok: true, found: true, already: true, session_id: p.getProperty('LAST_START_SESSION_ID') };
   var raw = p.getProperty('PROCESSED_MAIL_IDS');
   var processed = raw ? JSON.parse(raw) : [];
   if (!Array.isArray(processed) || processed.some(function(id) {
@@ -111,6 +128,8 @@ function findAndPost_() {
       var msgs = threads[t].getMessages();
       for (var i = 0; i < msgs.length; i++) {
         var msg = msgs[i];
+        if (msg.getDate().getTime() < Date.parse(since) - 120000 ||
+            Date.now() - msg.getDate().getTime() > MAX_MAIL_AGE_MIN * 60000) continue;
         if (processed.indexOf(msg.getId()) !== -1) {
           already = true;
           continue;
@@ -129,13 +148,14 @@ function findAndPost_() {
   var mid = newest.msg.getId();
 
   var payload = {
+    start_id: sid,
     session_id: newest.found.session_id,
     token: newest.found.token,
     mail_id: mid,
     state: 'live',
     source: 'gas'
   };
-  var resp = UrlFetchApp.fetch(workerBase_() + '/upload?op=session', {
+  var resp = UrlFetchApp.fetch(base + '/upload?op=session', {
     method: 'post',
     contentType: 'application/json',
     headers: { 'X-Upload-Token': p.getProperty('UPLOAD_TOKEN') },
@@ -146,9 +166,11 @@ function findAndPost_() {
     return {
       ok: false,
       found: false,
-      error: 'worker rejected: ' + resp.getResponseCode() + ' ' + resp.getContentText()
+      error: 'worker rejected: ' + resp.getResponseCode()
     };
   }
+  p.setProperty('LAST_START_SESSION_ID', newest.found.session_id);
+  p.setProperty('LAST_START_ID', sid);
   processed.push(mid);
   p.setProperty('PROCESSED_MAIL_IDS', JSON.stringify(processed.slice(-20)));
   p.setProperty('LAST_MAIL_ID', mid);
@@ -156,18 +178,8 @@ function findAndPost_() {
   return { ok: true, found: true, session_id: newest.found.session_id };
 }
 
-// 診断用 (エディタから手動実行する)。ログにはセッションIDだけを出す。
+// 診断用。実際に新規セッションを投稿し得るため、実走中は実行しない。
 function debugCheck() {
-  Logger.log('user: ' + Session.getEffectiveUser().getEmail());
-  var threads = GmailApp.search('livetrack newer_than:2h', 0, 5);
-  Logger.log('threads: ' + threads.length);
-  for (var t = 0; t < threads.length; t++) {
-    var msgs = threads[t].getMessages();
-    for (var i = 0; i < msgs.length; i++) {
-      var f = extract_(msgs[i].getBody());
-      Logger.log('msg from=' + msgs[i].getFrom() +
-        ' extract=' + (f ? f.session_id : 'null'));
-    }
-  }
-  Logger.log('findAndPost_: ' + JSON.stringify(findAndPost_()));
+  var result = findAndPost_(Utilities.getUuid(), new Date().toISOString());
+  Logger.log(JSON.stringify({ok: result.ok, found: result.found, already: result.already}));
 }

@@ -70,6 +70,35 @@ class StateTests(unittest.TestCase):
 
 
 class WatcherTests(unittest.TestCase):
+    def test_start_status_lifecycle(self):
+        import importlib, types
+        credentials = types.ModuleType("dynamic_credentials")
+        credentials.add_surrogate_to_request = lambda *args, **kwargs: None
+        credentials.read_json_response = lambda response: None
+        with patch.dict(sys.modules, {"dynamic_credentials": credentials}):
+            watcher = importlib.import_module("session_watcher")
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory)
+            (path / "config.json").write_text(json.dumps({"state_dir":directory}))
+            args = types.SimpleNamespace(config=str(path / "config.json"), monitor="fixture", dry_run=False)
+            w = watcher.Watcher(args)
+            sess = {"session_id":"s", "token":"fake", "start_id":"bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"}
+            proc = types.SimpleNamespace(pid=1, poll=lambda:0)
+            with patch.object(watcher, "WATCHER_STATE", path / "watcher.json"), \
+                 patch.object(watcher, "publisher_call", return_value={"ok":True}), \
+                 patch.object(watcher.subprocess, "Popen", return_value=proc), \
+                 patch.object(watcher, "post_start_status", return_value=True) as post, \
+                 patch.object(watcher, "fetch_session", return_value=(404, {})):
+                self.assertTrue(w.launch(sess, False))
+                self.assertEqual(json.loads(w.session_path().read_text())["start_id"], sess["start_id"])
+                w.cycle()
+                self.assertEqual([call.args for call in post.call_args_list],
+                                 [(sess["start_id"], "monitoring"), (sess["start_id"], "closed")])
+                post.reset_mock()
+                w.launch({"session_id":"manual", "token":"fake"}, False)
+                w.cycle()
+                post.assert_not_called()
+
     def test_restart_and_initialization_failure(self):
         import importlib
         import types

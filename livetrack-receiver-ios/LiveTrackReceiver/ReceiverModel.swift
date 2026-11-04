@@ -12,7 +12,14 @@ final class ReceiverModel: NSObject, ObservableObject {
     var detectionKey: String { didSet { defaults.set(detectionKey, forKey: "detectionKey") } }
     var detectionEnabled: Bool { LiveTrackKick.endpoint(detectionURL, key: detectionKey) != nil }
     private var kickTask: Task<Void, Never>?
-    private var kickStart: ContinuousClock.Instant?
+    private var startRequest: StartRequest? {
+        didSet {
+            if let startRequest, let data = try? JSONEncoder().encode(startRequest) {
+                defaults.set(data, forKey: "startRequest.v1")
+            } else { defaults.removeObject(forKey: "startRequest.v1") }
+        }
+    }
+    @Published private(set) var monitoring = false
     @Published var interval: Double { didSet { defaults.set(interval, forKey: "interval") } }
     @Published var timeoutMinutes: Int { didSet { defaults.set(timeoutMinutes, forKey: "timeoutMinutes") } }
     private var timeoutTask: Task<Void, Never>?
@@ -136,6 +143,12 @@ final class ReceiverModel: NSObject, ObservableObject {
         location.pausesLocationUpdatesAutomatically = false
         observeNotifications()
         log("アプリ準備完了", foregroundOnly ? "前景専用構成" : "Audio / Location構成")
+        if let data = defaults.data(forKey: "startRequest.v1"),
+           let saved = try? JSONDecoder().decode(StartRequest.self, from: data),
+           ["waiting", "detected"].contains(saved.phase) {
+            startRequest = saved
+            Task { [weak self] in self?.start(resuming: true) }
+        }
     }
 
     func log(_ event: String, _ detail: String = "") {
@@ -145,7 +158,7 @@ final class ReceiverModel: NSObject, ObservableObject {
         if logs.count > 2000 { logs.removeFirst(logs.count - 2000) }
     }
 
-    func start() {
+    func start(resuming: Bool = false) {
         guard !running, !busy else { return }
         guard let source = QueueURL.source(queueURL) else {
             notice = "設定で有効な配信URLを指定してください。https:// で始まるURLを推奨します。"; return
@@ -164,7 +177,8 @@ final class ReceiverModel: NSObject, ObservableObject {
         armTimeout()
         updateIdleTimer(); updateLocation()
         log("受信開始", "間隔 \(Int(interval))秒")
-        kickStart = detectionEnabled ? .now : nil
+        if !resuming { startRequest = detectionEnabled ? StartRequest() : nil }
+        monitoring = false
         beginPolling(source)
     }
 
@@ -176,47 +190,60 @@ final class ReceiverModel: NSObject, ObservableObject {
                 guard let self, self.running, self.runToken == token else { return }
                 await self.poll(source, token: token)
                 guard !Task.isCancelled, self.running, self.runToken == token, !self.stoppingForTimeout else { return }
+                await self.refreshStartStatus(source, token: token)
+                guard !Task.isCancelled, self.running, self.runToken == token else { return }
                 self.startKickIfNeeded()
                 do { try await Task.sleep(for: .seconds(self.interval)) } catch { return }
             }
         }
     }
 
-    // Consume the start marker once, after the first queue request has returned.
+    private func refreshStartStatus(_ source: URL, token: UUID) async {
+        guard let requestID = startRequest?.id else { return }
+        do {
+            let url = source.deletingLastPathComponent().appendingPathComponent("start-status.json")
+            let (data, response) = try await network.data(for: URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 5))
+            guard !Task.isCancelled, running, token == runToken, requestID == startRequest?.id,
+                  let http = response as? HTTPURLResponse, http.statusCode == 200 else { return }
+            let status = try JSONDecoder().decode(StartStatus.self, from: data)
+            guard status.start_id == requestID else { return }
+            monitoring = status.state == "monitoring"
+            if monitoring {
+                startRequest?.phase = "monitoring"
+                cancelKick()
+            } else if status.state == "closed" { startRequest?.phase = "closed" }
+        } catch { /* Public status failures do not affect reception or playback. */ }
+    }
+
     private func startKickIfNeeded() {
-        guard let start = kickStart, let url = LiveTrackKick.endpoint(detectionURL, key: detectionKey) else { return }
-        kickStart = nil
+        guard kickTask == nil, let start = startRequest, start.phase == "waiting",
+              let url = LiveTrackKick.endpoint(detectionURL, key: detectionKey, sid: start.id, since: start.since) else { return }
         let token = runToken
         announce("LiveTrack の開始を待っています")
         kickTask = Task {
-            let clock = ContinuousClock()
-            let end = start.advanced(by: .seconds(1800))
-            var warned = false
-            while !Task.isCancelled, running, token == runToken, clock.now < end {
-                let tick = clock.now
-                if !warned && tick >= start.advanced(by: .seconds(900)) {
-                    warned = true
+            while !Task.isCancelled, running, token == runToken, startRequest?.id == start.id {
+                let elapsed = Date().timeIntervalSince(start.since)
+                if elapsed >= 1800 { startRequest?.phase = "expired"; return }
+                if elapsed >= 900 && startRequest?.warned == false {
+                    startRequest?.warned = true
                     announce("LiveTrack の開始メールが見つかりません")
                 }
                 do {
                     let request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 10)
                     let (data, response) = try await network.data(for: request)
                     try Task.checkCancellation()
+                    guard running, token == runToken, startRequest?.id == start.id else { return }
                     if let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) {
                         let reply = try JSONDecoder().decode(LiveTrackKick.Reply.self, from: data)
-                        if reply.ok && reply.found == true { return }
+                        if reply.ok && reply.found == true { startRequest?.phase = "detected"; return }
                     }
-                } catch {
-                    // URL errors may contain the request URL and key. Retry silently.
-                    if Task.isCancelled { return }
-                }
-                do { try await clock.sleep(until: min(tick.advanced(by: .seconds(30)), end)) } catch { return }
+                } catch { if Task.isCancelled { return } }
+                do { try await Task.sleep(for: .seconds(min(30, max(0, 1800 - Date().timeIntervalSince(start.since))))) } catch { return }
             }
         }
     }
 
     private func cancelKick() {
-        kickStart = nil
         kickTask?.cancel()
         kickTask = nil
     }
@@ -224,6 +251,7 @@ final class ReceiverModel: NSObject, ObservableObject {
     func stop() {
         pumpWatch?.cancel(); pumpWatch = nil
         cancelKick()
+        startRequest = nil; monitoring = false
         timeoutTask?.cancel(); timeoutTask = nil
         finalAnnouncement = nil; stoppingForTimeout = false
         speaker.stopSpeaking(at: .immediate)
@@ -284,10 +312,6 @@ final class ReceiverModel: NSObject, ObservableObject {
                 let a = $0.element.timestamp!, b = $1.element.timestamp!
                 return a == b ? $0.offset < $1.offset : a < b
             }.map(\.element)
-            if kickStart != nil || kickTask != nil {
-                let today = LiveTrackKick.today()
-                if queue.session == today || queue.session.hasPrefix(today + "-") { cancelKick() }
-            }
             liveSession = queue.session
             let firstSync = defaults.data(forKey: "played.v1") == nil && !defaults.bool(forKey: "queueSynced")
             var persistPlayed = firstSync

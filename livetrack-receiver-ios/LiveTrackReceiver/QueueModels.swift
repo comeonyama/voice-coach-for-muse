@@ -151,13 +151,17 @@ enum LiveTrackKick {
         let found: Bool?
     }
 
-    static func endpoint(_ raw: String, key: String) -> URL? {
+    static func endpoint(_ raw: String, key: String, sid: UUID? = nil, since: Date? = nil) -> URL? {
         guard !key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               var parts = URLComponents(string: raw.trimmingCharacters(in: .whitespacesAndNewlines)),
               parts.scheme?.lowercased() == "https", let host = parts.host, !host.isEmpty,
               parts.user == nil, parts.password == nil, parts.path.hasSuffix("/exec") else { return nil }
-        var items = (parts.queryItems ?? []).filter { $0.name != "key" }
+        var items = (parts.queryItems ?? []).filter { !["key", "sid", "since"].contains($0.name) }
         items.append(URLQueryItem(name: "key", value: key))
+        if let sid, let since {
+            items.append(URLQueryItem(name: "sid", value: sid.uuidString))
+            items.append(URLQueryItem(name: "since", value: ISO8601DateFormatter().string(from: since)))
+        }
         parts.queryItems = items
         parts.percentEncodedQuery = parts.percentEncodedQuery?.replacingOccurrences(of: "+", with: "%2B")
         parts.fragment = nil
@@ -171,4 +175,16 @@ enum LiveTrackKick {
         format.dateFormat = "yyyy-MM-dd"
         return "run-" + format.string(from: date)
     }
+}
+
+struct StartRequest: Codable {
+    var id = UUID()
+    var since = Date()
+    var phase = "waiting"
+    var warned = false
+}
+struct StartStatus: Decodable {
+    let start_id: UUID
+    let state: String
+    let at: String
 }

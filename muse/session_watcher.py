@@ -58,6 +58,22 @@ def fetch_session():
             return e.code, {"ok": False, "error": "non-JSON error response"}
 
 
+def post_start_status(start_id, state):
+    if not start_id:
+        return True
+    payload = dict(start_id=start_id, state=state,
+                   at=datetime.datetime.now(datetime.timezone.utc).isoformat())
+    req = urllib.request.Request(f"https://{HOST}/upload?op=start-status",
+        data=json.dumps(payload).encode(), headers={"Content-Type": "application/json"}, method="POST")
+    try:
+        add_surrogate_to_request(req, os.environ.get("VCM_CONNECTOR_ID", "custom.vcm-worker-upload"), allowed_hosts=[HOST])
+        with urllib.request.build_opener(NoRedirect()).open(req, timeout=20) as response:
+            return response.status == 200 and read_json_response(response).get("ok") is True
+    except Exception as error:
+        log(json.dumps(error_info(error, "start_status")))
+        return False
+
+
 def load_watcher_state():
     return read_state(WATCHER_STATE, {})
 
@@ -122,6 +138,7 @@ class Watcher:
             write_json(self.state_dir / "last_session_mail.json", {"mail_id": sess.get("mail_id", "")})
             write_json(self.session_path(), {
                 "session_id": sid, "token": sess["token"],
+                **({"start_id": sess["start_id"]} if sess.get("start_id") else {}),
                 "mail_id": sess.get("mail_id", ""), "state": "live",
                 "started_mail_at": sess.get("received_at", ""), "source": "session_watcher",
             })
@@ -137,11 +154,21 @@ class Watcher:
             stdout=logf, stderr=subprocess.STDOUT, start_new_session=True)
         log(f"monitor launched pid={self.monitor_proc.pid} session={sid} queue={qsession}")
         logf.close()
+        st["start_id"] = sess.get("start_id")
+        st["pending_start_status"] = "monitoring" if sess.get("start_id") else None
         st["status"] = "running"
         save_watcher_state(st)
+        self.flush_start_status()
         return True
 
+    def flush_start_status(self):
+        st = load_watcher_state()
+        if st.get("pending_start_status") and post_start_status(st.get("start_id"), st["pending_start_status"]):
+            st.pop("pending_start_status", None)
+            save_watcher_state(st)
+
     def cycle(self):
+        self.flush_start_status()
         if self.monitor_proc is not None:
             rc = self.monitor_proc.poll()
             if rc is None:
@@ -149,8 +176,10 @@ class Watcher:
             log(f"monitor exited rc={rc}")
             self.monitor_proc = None
             st = load_watcher_state()
+            st["pending_start_status"] = "closed" if st.get("start_id") else None
             st["status"] = "complete" if rc == 0 else "failed"
             save_watcher_state(st)
+            self.flush_start_status()
         if lock_busy(self.state_dir / ".monitor.lock"):
             return
         status, sess = fetch_session()

@@ -71,6 +71,13 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
 
+    if (request.method === "GET" && url.pathname === "/start-status.json") {
+      const obj = await env.QUEUE_BUCKET.get("start-status.json");
+      if (!obj) return json(404, { ok: false, error: "no start status" });
+      const value = JSON.parse(await obj.text());
+      return json(200, { start_id: value.start_id, state: value.state, at: value.at });
+    }
+
     // ---- public reads -------------------------------------------------
     if (request.method === "GET" && url.pathname === "/queue.json") {
       const obj = await env.QUEUE_BUCKET.get("queue.json");
@@ -189,6 +196,21 @@ export default {
           httpMetadata: { contentType: "application/json" },
         });
         return json(200, { ok: true, runs: parsed.runs.length });
+      }
+
+      if (op === "start-status") {
+        let value;
+        try { value = await request.json(); } catch { return json(400, {ok:false, error:"invalid json"}); }
+        if (!value || typeof value.start_id !== "string" ||
+            !/^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(value.start_id) ||
+            !["monitoring", "closed"].includes(value.state) ||
+            typeof value.at !== "string" || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})$/.test(value.at) || !Number.isFinite(Date.parse(value.at)))
+          return json(400, {ok:false, error:"invalid start status"});
+        const safe = {start_id:value.start_id, state:value.state, at:value.at};
+        await env.QUEUE_BUCKET.put("start-status.json", JSON.stringify(safe), {
+          httpMetadata: {contentType:"application/json"}
+        });
+        return json(200, {ok:true});
       }
 
       if (op === "session") {

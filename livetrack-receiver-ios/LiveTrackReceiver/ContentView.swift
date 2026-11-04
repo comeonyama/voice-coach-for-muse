@@ -53,11 +53,11 @@ struct ContentView: View {
             }
             .background(background.ignoresSafeArea())
             .toolbar(.hidden, for: .navigationBar)
-            .alert("Muse に LiveTrack を監視するよう指示してください", isPresented: $presentingGuide) {
+            .alert("ウォッチでアクティビティを開始してください。", isPresented: $presentingGuide) {
                 Button("OK", role: .cancel) { }
                 Button("今後このダイアログは表示しない") { showStartGuide = false }
             } message: {
-                Text("このアプリは受信専用です。Muse が LiveTrack の監視を始めると、コーチングが届きます。")
+                Text("すでに開始済みの場合は、Muse に「アクティビティ監視を開始して」と依頼してください。")
             }
             .safeAreaInset(edge: .bottom) {
                 if model.paused || !model.notice.isEmpty {
@@ -92,7 +92,7 @@ struct ContentView: View {
                 if model.running || model.busy { model.stop() }
                 else {
                     model.start()
-                    presentingGuide = model.running && showStartGuide && !model.detectionEnabled
+                    presentingGuide = model.running && showStartGuide
                 }
             } label: {
                 ZStack {
@@ -109,7 +109,7 @@ struct ContentView: View {
             .accessibilityLabel(model.running ? "コーチング停止" : model.busy ? "音声テストを停止" : "コーチング開始")
             HStack(spacing: 6) {
                 if model.running { Circle().frame(width: 7, height: 7) }
-                Text(model.running ? "受信中" : "受信停止中")
+                Text(model.running ? (model.monitoring ? "監視中・受信中" : "受信中") : "受信停止中")
             }.font(.headline).foregroundStyle(model.running ? green : .gray)
         }.padding(.bottom, 6)
     }

@@ -161,3 +161,17 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer xcrun swiftc \
 ## 試用名称
 
 アプリ名・プロジェクト名・プロダクト名は **Voice Coach for Muse**、ホーム画面の表示名は **Voice Coach** です。ヘッダーは大きな「Voice Coach」と淡い緑の小さな「for Muse」の2段表示です。Meta公式アプリではありません。公開時には名称を再検討する予定です。バンドルIDと受信・再生ロジックは変更していません。名称変更版の実機用ビルドは成功しました。受信・ダッキングの実機再検証は未実施です。
+
+## アプリ開始を基準にするLiveTrack検知
+
+通常操作は「アプリでコーチング開始 → ウォッチでアクティビティ開始」。
+開始時のUUIDとUTC時刻を保存し、GASに `key` / `sid` / `since` を渡す。
+待機中のアプリ再起動では同じ要求を再開し、停止→開始では新しく生成する。
+15分通知済みフラグも保存し、30分の上限は元の開始時刻から数える。
+GASのfoundは検知だけを意味する。監視中表示は公開start-status.jsonの
+自分の開始IDがmonitoringになったときだけで、当日queue名では判定しない。
+
+配置はWorker・VMを準備後、新アプリを先に配布し、GASの既存デプロイを
+「新しいバージョン」で更新する（/exec URL維持、新規デプロイ不要）。
+GAS更新後はsid/sinceのない旧アプリでは検知できない。
+詳細は [GAS手順](../muse/gas/README.md) を参照。

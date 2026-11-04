@@ -2,6 +2,14 @@ import Foundation
 
 @main struct QueueModelTests {
     static func main() throws {
+        let start = StartRequest()
+        let restoredStart = try JSONDecoder().decode(StartRequest.self, from: JSONEncoder().encode(start))
+        precondition(restoredStart.id == start.id && restoredStart.since == start.since && restoredStart.phase == "waiting")
+        let kick = LiveTrackKick.endpoint("https://example.com/exec?sid=old&since=old", key: "secret", sid: start.id, since: start.since)!
+        let parameters = URLComponents(url: kick, resolvingAgainstBaseURL: false)!.queryItems!
+        precondition(parameters.filter { $0.name == "sid" }.count == 1)
+        precondition(parameters.first { $0.name == "sid" }?.value == start.id.uuidString)
+        precondition(parameters.first { $0.name == "since" }?.value?.hasSuffix("Z") == true)
         let source = QueueURL.source("https://example.com/runs/queue.json?token=abc")!
         precondition(QueueURL.audio("audio/m1.mp3", relativeTo: source)?.absoluteString == "https://example.com/runs/audio/m1.mp3")
         precondition(QueueURL.source("file:///tmp/queue.json") == nil)
