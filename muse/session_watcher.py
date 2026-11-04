@@ -65,6 +65,7 @@ def post_start_status(start_id, state):
                    at=datetime.datetime.now(datetime.timezone.utc).isoformat())
     req = urllib.request.Request(f"https://{HOST}/upload?op=start-status",
         data=json.dumps(payload).encode(), headers={"Content-Type": "application/json"}, method="POST")
+    req.add_header("User-Agent", UA)
     try:
         add_surrogate_to_request(req, os.environ.get("VCM_CONNECTOR_ID", "custom.vcm-worker-upload"), allowed_hosts=[HOST])
         with urllib.request.build_opener(NoRedirect()).open(req, timeout=20) as response:
