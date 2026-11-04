@@ -30,16 +30,9 @@ Museが更新する `queue.json` とMP3をHTTP(S)で配信し、アプリにURL�
 
 ## システム全体
 
-```mermaid
-flowchart LR
-    A[Garmin LiveTrack] --> B[Muse: 監視・コーチング文章生成]
-    B --> C[TTS: MP3生成]
-    C --> D[発行側スクリプト]
-    D -->|HTTPS・トークン認証| E[upload.php]
-    E --> F[queue.json と audio/*.mp3]
-    F -->|定期取得・読み取り専用| G[Voice Coach for Muse]
-    G --> H[Spotifyをダッキングして再生]
-```
+現在のCloudflare Worker＋R2構成は、[システム構成図・データフロー詳細](docs/system-and-data-flow.md)を参照してください。開始検知、配信、終了処理、データの保存先をまとめています。
+
+現在の配信側の正本は `muse/` にあります。以下のディレクトリ説明は旧XServer構成です。
 
 | ディレクトリ | 役割 |
 |---|---|
