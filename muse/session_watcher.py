@@ -1,0 +1,203 @@
+#!/usr/bin/env python3
+"""VCM session watcher: start coaching automatically when GAS posts a session.
+
+Chain: Garmin start mail -> Gmail -> GAS (kicked by the iOS app) ->
+Worker R2 "session.json" -> THIS watcher -> coach_monitor.py.
+
+The watcher polls the Worker's authenticated GET /session.json. When a
+fresh session appears (received within FRESH_MIN minutes) that it has not
+launched yet, it prepares the run exactly like run_watch.py does after
+detection (archive poll state, write session.json, init the queue) and
+launches coach_monitor.py with the production config. One monitor at a
+time. Muse (the chat agent) is not in this loop.
+
+Usage:
+  session_watcher.py [--config coach_config.json] [--interval 20]
+                     [--once] [--dry-run]
+"""
+import argparse, datetime, json, os, pathlib, subprocess, sys, time
+import urllib.request, urllib.error
+
+sys.path.insert(0, "/opt/muse/skills/custom-connector-setup/bin")
+from dynamic_credentials import add_surrogate_to_request, read_json_response
+
+HOST = os.environ.get("VCM_WORKER_HOST", "vcm-queue.example.workers.dev")
+SESSION_URL = f"https://{HOST}/session.json"
+UA = ("Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) "
+      "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1")
+BASE = pathlib.Path(os.environ.get("VCM_BASE_DIR", os.path.expanduser("~/vcm")))
+WATCHER_STATE = BASE / "watcher_state.json"
+JST = datetime.timezone(datetime.timedelta(hours=9))
+FRESH_MIN = 20
+
+
+def log(msg):
+    now = datetime.datetime.now(JST).strftime("%Y-%m-%dT%H:%M:%S+09:00")
+    print(f"[{now}] {msg}", flush=True)
+
+
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, *args):
+        raise RuntimeError("redirect refused, verify the endpoint")
+
+
+def fetch_session():
+    req = urllib.request.Request(SESSION_URL, method="GET")
+    req.add_header("User-Agent", UA)
+    add_surrogate_to_request(req, os.environ.get("VCM_CONNECTOR_ID", "custom.vcm-worker-upload"), allowed_hosts=[HOST])
+    opener = urllib.request.build_opener(NoRedirect())
+    try:
+        with opener.open(req, timeout=20) as resp:
+            return resp.status, read_json_response(resp)
+    except urllib.error.HTTPError as e:
+        try:
+            return e.code, read_json_response(e)
+        except Exception:
+            return e.code, {"ok": False, "error": "non-JSON error response"}
+
+
+def load_watcher_state():
+    try:
+        return json.loads(WATCHER_STATE.read_text())
+    except Exception:
+        return {}
+
+
+def save_watcher_state(st):
+    WATCHER_STATE.write_text(json.dumps(st, ensure_ascii=False, indent=1) + "\n")
+
+
+def parse_ts(s):
+    try:
+        return datetime.datetime.fromisoformat(s.replace("Z", "+00:00"))
+    except Exception:
+        return None
+
+
+class Watcher:
+    def __init__(self, args):
+        self.args = args
+        self.cfg = json.loads(pathlib.Path(args.config).read_text())
+        self.state_dir = pathlib.Path(self.cfg["state_dir"])
+        self.monitor_proc = None
+
+    def session_path(self):
+        return self.state_dir / "session.json"
+
+    def leftover_live(self, fetched_id):
+        p = self.session_path()
+        if not p.exists():
+            return False
+        try:
+            cur = json.loads(p.read_text())
+        except Exception:
+            return False
+        return cur.get("state") == "live" and cur.get("session_id") != fetched_id
+
+    def try_finalize(self):
+        fin = pathlib.Path(__file__).resolve().parent / "finalize_run.py"
+        if not fin.exists():
+            fin = BASE / "finalize_run.py"
+        if not fin.exists():
+            return
+        log("leftover live session found; running finalize_run.py")
+        r = subprocess.run(["python3", str(fin), "--config", self.args.config],
+                           capture_output=True, text=True, timeout=300)
+        log(f"finalize_run rc={r.returncode} out={(r.stdout or '').strip()[-200:]} err={(r.stderr or '').strip()[-200:]}")
+
+    def launch(self, sess, dry_run):
+        sid = sess["session_id"]
+        received = parse_ts(sess.get("received_at", ""))
+        qdate = (received.astimezone(JST) if received else datetime.datetime.now(JST))
+        # Unique per run: the app treats (session, message id) as played,
+        # and message ids restart at run-001 on every launch, so reusing
+        # a date-only name makes later same-day runs invisible to the app.
+        qsession = "run-" + qdate.strftime("%Y-%m-%d-%H%M%S")
+        if dry_run:
+            log(f"DRY-RUN would launch monitor for session={sid} queue={qsession}")
+            return True
+        # mirror run_watch.py's post-detection preparation
+        prev = self.state_dir / "poll_state.json"
+        if prev.exists():
+            prev.rename(self.state_dir / "poll_state_prev.json")
+        (self.state_dir / "last_session_mail.json").write_text(
+            json.dumps({"mail_id": sess.get("mail_id", "")}))
+        self.session_path().write_text(json.dumps({
+            "session_id": sid, "token": sess["token"],
+            "mail_id": sess.get("mail_id", ""), "state": "live",
+            "started_mail_at": sess.get("received_at", ""),
+            "source": "session_watcher",
+        }, ensure_ascii=False, indent=1))
+        pub = self.cfg["publish_script"]
+        for cmd in (["init", qsession], ["sync"]):
+            r = subprocess.run(["python3", pub, *cmd],
+                               capture_output=True, text=True, timeout=60)
+            log(f"publish {' '.join(cmd)} rc={r.returncode} {(r.stdout or '').strip()[:120]}")
+        logf = open(self.state_dir / "monitor_auto.log", "a", encoding="utf-8")
+        self.monitor_proc = subprocess.Popen(
+            ["python3", self.args.monitor, "--config", self.args.config,
+             "--session", str(self.session_path())],
+            stdout=logf, stderr=subprocess.STDOUT, start_new_session=True)
+        log(f"monitor launched pid={self.monitor_proc.pid} session={sid} queue={qsession}")
+        st = load_watcher_state()
+        st["launched_session_id"] = sid
+        st["launched_at"] = datetime.datetime.now(JST).isoformat(timespec="seconds")
+        save_watcher_state(st)
+        return True
+
+    def cycle(self):
+        if self.monitor_proc is not None:
+            rc = self.monitor_proc.poll()
+            if rc is None:
+                return  # a run is in progress; do not start another
+            log(f"monitor exited rc={rc}")
+            self.monitor_proc = None
+        status, sess = fetch_session()
+        if status == 404:
+            log("no session posted")
+            return
+        if status != 200 or not isinstance(sess, dict) or "session_id" not in sess:
+            log(f"session fetch unexpected: status={status} body={str(sess)[:160]}")
+            return
+        sid = sess["session_id"]
+        if load_watcher_state().get("launched_session_id") == sid:
+            log(f"session {sid} already launched")
+            return
+        received = parse_ts(sess.get("received_at", ""))
+        if received is None:
+            log("session has no received_at; ignoring")
+            return
+        age_min = (datetime.datetime.now(datetime.timezone.utc) - received).total_seconds() / 60
+        if age_min > FRESH_MIN:
+            log(f"session {sid} is stale ({age_min:.0f} min old); ignoring")
+            return
+        if self.leftover_live(sid):
+            self.try_finalize()
+            if self.leftover_live(sid):
+                log("previous session still live after finalize attempt; waiting")
+                return
+        self.launch(sess, self.args.dry_run)
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--config", default=str(BASE / "coach_config.json"))
+    ap.add_argument("--monitor", default=str(pathlib.Path(__file__).resolve().parent / "coach_monitor.py"))
+    ap.add_argument("--interval", type=int, default=20)
+    ap.add_argument("--once", action="store_true")
+    ap.add_argument("--dry-run", action="store_true")
+    args = ap.parse_args()
+    w = Watcher(args)
+    log(f"watcher start (interval={args.interval}s once={args.once} dry_run={args.dry_run})")
+    while True:
+        try:
+            w.cycle()
+        except Exception as e:
+            log(f"cycle error: {e}")
+        if args.once:
+            return
+        time.sleep(args.interval)
+
+
+if __name__ == "__main__":
+    main()

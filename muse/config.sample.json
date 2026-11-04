@@ -1,0 +1,34 @@
+{
+ "_about": "Sample configuration for coach_monitor.py. Copy to coach_config.json and adjust the paths and heart-rate bands to your environment. Relative paths are resolved against the process working directory, so either launch the monitor from this folder or replace them with absolute paths. Runtime data lives under ./state and ./queue. hr_bands are one runner's example (resting HR ~55, LTHR ~158): set your own.",
+ "audio": true,
+ "close": {
+  "remove_session_file": false,
+  "standby_session": "standby"
+ },
+ "closing_attempts": 4,
+ "closing_text": "{distance}キロ。平均ペースはキロ{pace}でした。おつかれさまでした。",
+ "fast_alert_cooldown_min": 10,
+ "fast_limit_sec_per_km": 330,
+ "first_message_km": 0.3,
+ "hr_bands": {
+  "max_ok": 120,
+  "ok": 135,
+  "slightly_high": 150
+ },
+ "hydration_every_min": 40,
+ "hydration_min_duration_min": 75,
+ "milestone_km": 5,
+ "monitor_announce": "監視を開始しました。",
+ "no_live_closing_text": "ライブデータは観測できませんでした。おつかれさまでした。",
+ "poll_fail_abort": 30,
+ "poll_interval_sec": 20,
+ "poll_script": "./livetrack_poll.py",
+ "publish_script": "./publish.py",
+ "queue_json": "./queue/queue.json",
+ "say_attempts": 3,
+ "say_retry_backoff_sec": 5,
+ "send_mode": "per_km",
+ "stale_finish_sec": 600,
+ "state_dir": "./state",
+ "stock_file": "./comment_stock.json"
+}

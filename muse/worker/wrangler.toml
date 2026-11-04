@@ -1,0 +1,19 @@
+# VCM queue worker のデプロイ設定サンプル。
+# リポジトリでは worker/wrangler.toml として配置し、bucket_name は
+# 自分のアカウントで作成した R2 バケット名に合わせること。
+#
+# 手順:
+#   1. Cloudflare で R2 を有効化し、バケット (例: vcm-queue) を作成
+#   2. npx wrangler secret put UPLOAD_TOKEN   (アップロード用トークンを登録)
+#   3. npx wrangler deploy
+#
+# UPLOAD_TOKEN の値はチャットやリポジトリに書かないこと。
+# Muse 側 (publish.py) へは Secure Vault 経由で渡す。
+
+name = "vcm-queue"
+main = "worker.js"
+compatibility_date = "2025-04-01"
+
+[[r2_buckets]]
+binding = "QUEUE_BUCKET"
+bucket_name = "vcm-queue"

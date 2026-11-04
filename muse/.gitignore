@@ -1,0 +1,9 @@
+# VCM Muse-side runtime data — never commit these.
+coach_config.json
+comment_stock.json
+state/
+queue/
+*.log
+watcher_state.json
+__pycache__/
+*.pyc
