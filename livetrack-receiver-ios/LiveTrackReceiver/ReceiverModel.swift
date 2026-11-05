@@ -27,6 +27,7 @@ final class ReceiverModel: NSObject, ObservableObject {
     private let coachingSpeaker = AVSpeechSynthesizer()
     private var coachingUtterance: AVSpeechUtterance?
     private let speaker = AVSpeechSynthesizer()
+    private var announcements = Set<ObjectIdentifier>()
     private var finalAnnouncement: AVSpeechUtterance?
     private var offline = false
     private var networkFailures = 0
@@ -134,7 +135,7 @@ final class ReceiverModel: NSObject, ObservableObject {
         coachingSpeaker.delegate = self
         coachingSpeaker.usesApplicationAudioSession = true
         speaker.delegate = self
-        speaker.usesApplicationAudioSession = false
+        speaker.usesApplicationAudioSession = true
         logs = defaults.stringArray(forKey: "playbackDiagnostics") ?? []
         location.delegate = self
         location.activityType = .fitness
@@ -476,8 +477,18 @@ final class ReceiverModel: NSObject, ObservableObject {
         log("システム通知", text)
         let speech = AVSpeechUtterance(string: text)
         speech.voice = AVSpeechSynthesisVoice(language: "ja-JP")
+        do { try activateAudio() }
+        catch { log("システム通知エラー", "Audio Sessionの有効化失敗"); return }
+        announcements.insert(ObjectIdentifier(speech))
         if stoppingForTimeout { finalAnnouncement = speech }
         speaker.speak(speech)
+    }
+
+    private func finishAnnouncement(_ utterance: AVSpeechUtterance) {
+        guard announcements.remove(ObjectIdentifier(utterance)) != nil else { return }
+        if announcements.isEmpty && player?.isPlaying != true && coachingUtterance == nil {
+            releaseAudio()
+        }
     }
 
     private func armTimeout() {
@@ -659,7 +670,7 @@ final class ReceiverModel: NSObject, ObservableObject {
     }
 
     private func releaseAudio() {
-        guard sessionActive else { return }
+        guard sessionActive, announcements.isEmpty else { return }
         do {
             try session.setActive(false, options: [.notifyOthersOnDeactivation])
             sessionActive = false; audioStatus = "解放済み"
@@ -787,12 +798,14 @@ final class ReceiverModel: NSObject, ObservableObject {
 extension ReceiverModel: AVSpeechSynthesizerDelegate {
     nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
         Task { @MainActor in
+            self.finishAnnouncement(utterance)
             if self.coachingUtterance === utterance { self.resolvePlayback(true) }
             if self.finalAnnouncement === utterance { self.stop() }
         }
     }
     nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didCancel utterance: AVSpeechUtterance) {
         Task { @MainActor in
+            self.finishAnnouncement(utterance)
             if self.coachingUtterance === utterance { self.resolvePlayback(false) }
         }
     }
