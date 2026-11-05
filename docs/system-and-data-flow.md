@@ -20,12 +20,13 @@ flowchart TB
   Phone[iPhoneアプリ] -->|開始IDと待機開始時刻で検知依頼| GAS[GAS / livetrack_detector.gs]
   GAS -->|メール検索| Gmail
   GAS -->|開始ID付きセッションを登録| Worker[Cloudflare Worker]
-  subgraph VM[常駐VM / Muse側プログラム]
+  subgraph VM[VM / フックごとの単発実行]
     Watcher[session_watcher.py / 開始を待つ]
     Monitor[coach_monitor.py / 配信判断・文面組立]
     Poll[livetrack_poll.py / 走行データ取得]
     Publish[publish.py / 音声化・配信]
-    Watcher -->|監視を起動| Monitor
+    Hook[20秒間隔の外部フック] --> Watcher
+    Hook -->|開始準備後にmonitor --once| Monitor
     Monitor --> Poll
     Monitor --> Publish
   end
@@ -82,12 +83,12 @@ sequenceDiagram
   end
   Note over V: 新しいセッションを確認（鮮度20分以内）
   V->>W: ラン専用queueの初期化・同期
-  V->>C: 監視プロセスを起動
+  Note over V,C: フックがwatcher --onceの後にmonitor --onceを実行
   V->>W: POST op=start-status（monitoring・認証あり）
   I->>W: GET start-status.json（受信ポーリングに相乗り）
   W-->>I: start_id / state / atのみ
   Note over I: 自分の開始IDがmonitoringなら監視中表示・キック終了
-  C-->>V: プロセス終了
+  C-->>V: 終了処理でローカルsessionをclosed（次回フックで確認）
   V->>W: POST op=start-status（closed・認証あり）
 ```
 
@@ -217,7 +218,7 @@ iPhoneの履歴は「現在のqueueとローカル履歴」＋「history.json」
 
 | プログラム | 役割 |
 |---|---|
-| session_watcher.py | 自動開始の常駐入口。監視異常終了時は同じsessionを最大3回再起動。start_idがある場合、起動・終了時に公開状態を更新 |
+| session_watcher.py | 単発の開始準備と終了状態反映。常駐モードはロールバック用に保持 |
 | run_watch.py / wait_announce.py | Museから依頼して開始する別経路。メールを待ちながら待機音声を配信 |
 | delivery.py | publisherの起動、タイムアウトの構造化、再送 |
 | runtime.py | 状態の原子的保存、権限、ロック、破損ファイル退避 |
@@ -238,3 +239,12 @@ iPhoneの履歴は「現在のqueueとローカル履歴」＋「history.json」
 診断ログの［開始検知］には、キック送信、HTTPエラー、ok/found、終了理由を記録する。URL・キーは記録しない。GAS実行一覧の「完了」は、アプリにok:trueが返った証拠にはならない。HTTPエラーとGASのJSON応答を区別して確認する。
 
 ウォッチャーのstart-status送信は、session取得と同じUser-Agentを付与する（`2c0b8b8`）。本番でUA未指定のPOSTが403（1010）になったとの報告を受けた対応。状態送信失敗時は保留して後続の巡回で再試行する。
+
+## フック単発実行への変更（2026-11-05）
+
+現在の監視経路は外部フック → hook_once.sh → watcher --once → liveならmonitor --once。
+20秒ごとに新しい認証環境で起動する。内部で常駐・sleepループは作らない。
+coach_state.jsonに送信時刻・回数・イベント・実行途中の応答と送信結果を保持する。
+終了処理の照合キーはキュー名で、待機期限前なら次回フックへ持ち越す。
+新方式のmonitoringはプロセス常駐ではなく開始準備済みを表す。
+[配置とロールバック](../muse/HOOKS.md)を参照。

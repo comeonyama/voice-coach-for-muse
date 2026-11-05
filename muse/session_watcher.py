@@ -116,7 +116,7 @@ class Watcher:
                            capture_output=True, text=True)
         log(f"finalize_run rc={r.returncode}")
 
-    def launch(self, sess, dry_run, resume=False):
+    def launch(self, sess, dry_run, resume=False, prepare_only=False):
         sid = sess["session_id"]
         received = parse_ts(sess.get("received_at", ""))
         qdate = (received.astimezone(JST) if received else datetime.datetime.now(JST))
@@ -142,12 +142,19 @@ class Watcher:
                 **({"start_id": sess["start_id"]} if sess.get("start_id") else {}),
                 "mail_id": sess.get("mail_id", ""), "state": "live",
                 "started_mail_at": sess.get("received_at", ""), "source": "session_watcher",
+                "queue_session": qsession,
             })
         st = load_watcher_state()
         retries = st.get("retries", 0) if resume else 0
         st.update(launched_session_id=sid, status="starting", retries=retries,
                   launched_at=datetime.datetime.now(JST).isoformat(timespec="seconds"))
         save_watcher_state(st)
+        if prepare_only:
+            st.update(status="prepared", start_id=sess.get("start_id"),
+                      pending_start_status="monitoring" if sess.get("start_id") else None)
+            save_watcher_state(st)
+            self.flush_start_status()
+            return True
         logf = private_append(self.state_dir / "monitor_auto.log")
         self.monitor_proc = subprocess.Popen(
             ["python3", self.args.monitor, "--config", self.args.config,
@@ -167,6 +174,28 @@ class Watcher:
         if st.get("pending_start_status") and post_start_status(st.get("start_id"), st["pending_start_status"]):
             st.pop("pending_start_status", None)
             save_watcher_state(st)
+
+    def cycle_once(self):
+        self.flush_start_status()
+        local = read_state(self.session_path(), {}, valid=valid_session)
+        st = load_watcher_state()
+        if local.get("state") == "closed" and st.get("status") != "complete":
+            st.update(status="complete", start_id=local.get("start_id"),
+                      pending_start_status="closed" if local.get("start_id") else None)
+            save_watcher_state(st)
+            self.flush_start_status()
+        status, sess = fetch_session()
+        if status != 200 or not isinstance(sess, dict) or not valid_session(sess):
+            return
+        if local.get("session_id") == sess["session_id"]:
+            return
+        # The monitor's next single cycle finishes the current run first.
+        if local.get("state") == "live":
+            return
+        received = parse_ts(sess.get("received_at", ""))
+        if received is None or (datetime.datetime.now(datetime.timezone.utc)-received).total_seconds() > FRESH_MIN*60:
+            return
+        self.launch(sess, self.args.dry_run, prepare_only=True)
 
     def cycle(self):
         self.flush_start_status()
@@ -241,8 +270,15 @@ def main():
     args = ap.parse_args()
     w = Watcher(args)
     log(f"watcher start (interval={args.interval}s once={args.once} dry_run={args.dry_run})")
-    with file_lock(w.state_dir / ".watcher.lock", blocking=False):
-        watch(w, args)
+    try:
+        with file_lock(w.state_dir / ".watcher.lock", blocking=False):
+            if args.once:
+                with file_lock(w.state_dir / ".monitor.lock", blocking=False):
+                    w.cycle_once()
+            else:
+                watch(w, args)
+    except BlockingIOError:
+        if not args.once: raise
 
 
 def watch(w, args):

@@ -14,7 +14,7 @@ Muse (エージェント) へ渡す運用手順書を含む。
 | `livetrack_poll.py` | LiveTrack API のポーリング。セッション情報と軌跡を取得し、距離・時間・心拍・スプリットを JSON で返す |
 | `coach_monitor.py` | 監視ループ本体。文面の組み立て、送信タイミング、終了処理、再送を担う |
 | `publish.py` | 発行係。Muse TTS で音声化し、Worker のキューへ上げる (ローカルミラーも保持) |
-| `session_watcher.py` | 自動開始チェーンの常駐ウォッチャー。Worker にセッションが届いたら監視を起動 |
+| `session_watcher.py` | `--once`で開始準備と状態反映。常駐モードはロールバック用に保持 |
 | `run_watch.py` | 手動開始用。待機音声を流しながら開始メールを検知し、監視へ渡す |
 | `wait_announce.py` | 検知までの待機音声 (run_watch から起動される) |
 | `finalize_run.py` | 監視が途中で死んだ場合の復旧。最終ポイントから終了処理を完遂する |
@@ -36,7 +36,7 @@ Muse (エージェント) へ渡す運用手順書を含む。
 5. `config.sample.json` を `coach_config.json` にコピーして自分の
    環境に合わせ、`comment_stock.sample.json` を `comment_stock.json`
    にコピーしてコメントを差し替える。
-6. 自動開始を使う場合は session_watcher.py を常駐させる。
+6. [フック単発実行手順](HOOKS.md)に従い、20秒間隔で `hook_once.sh --config ...` を呼ぶ。常駐は不要。
 
 ## 環境変数
 
@@ -55,3 +55,6 @@ Muse (エージェント) へ渡す運用手順書を含む。
 - トークン類 (LiveTrack トークン、アップロードトークン)
 
 これらは .gitignore でも除外している。
+
+単発モードは `coach_state.json` に送信ルールの進行状態と実行途中の送信を保存します。
+監視サイクルは各回で終了し、認証はフック実行時の環境から受け取ります。

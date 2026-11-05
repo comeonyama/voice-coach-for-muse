@@ -37,18 +37,17 @@ coach_monitor.py
 ## 起動モード A: 自動チェーン
 
 前提: GAS がデプロイ済み、Worker に session 取り込み対応版が入っている、
-session_watcher.py が常駐している。
+20秒間隔のフックが `hook_once.sh` を単発起動するよう登録されている。
 GAS のスクリプトプロパティは `KICK_SECRET`、`UPLOAD_TOKEN`、
 `WORKER_BASE`（自分の Worker の URL）が必須。`WORKER_BASE` が未設定なら
 キックは `ok:false` と理由を返し、実行ログにもエラーを記録する。
 新しい GAS デプロイで /exec URL が変わった場合は、iOS アプリの
 「検知スクリプト URL」も更新する。詳細は [GAS 設置手順](../gas/README.md) を参照。
 
-- ウォッチャーは Worker の GET /session.json を認証付きでポーリングし、
-  受信から 20 分以内の新しいセッションを見たら監視を自動起動する。
-- Muse の仕事は「常駐が生きているかの確認」だけ。ラン予定の前に
-  ウォッチャーのログ鮮度とプロセスを確認し、死んでいたら再起動する
-  (VM 入れ替え等で落ちることがある)。
+- フックが watcher --once でWorkerのセッションを確認し、開始準備を行う。
+  続けてliveセッションに monitor --once を実行する。毎回終了し常駐しない。
+- Museはフック実行の鮮度とcoach_logを確認する。古い常駐プロセスの定期再起動は行わない。
+  切替・ロールバック・状態ファイルの詳細は [HOOKS.md](../HOOKS.md) を参照する。
 - ラン開始前にキューをそのラン専用のセッション名で初期化する
   (publish.py init)。前回の名前が残っているとアプリ側で再生エラーや
   既読扱いが起きる。
@@ -58,8 +57,8 @@ GAS のスクリプトプロパティは `KICK_SECRET`、`UPLOAD_TOKEN`、
 操作順は「アプリで開始 → 時計でアクティビティ開始」。アプリはUUIDのstart_idと
 UTCのsinceを保持してキックし、GASはsinceの120秒前以降・30分以内の未処理
 メールだけを候補とする。キー・start_id・sinceがない要求に旧方式の救済はしない。
-当日queue名は監視開始の証拠にしない。GASの検知後、VMがstart_id付きの
-監視を起動した時点で公開start-statusをmonitoring、終了を観測したらclosedにする。
+当日queue名は監視開始の証拠にしない。GASの検知後、watcher --onceがstart_id付きの
+監視開始準備を完了した時点で公開start-statusをmonitoring、終了を観測したらclosedにする。
 公開するのはstart_id / state / atだけ。session.jsonは引き続き非公開。
 手動経路でstart_idがない場合は状態を投稿しない。
 

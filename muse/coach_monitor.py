@@ -55,6 +55,7 @@ import argparse
 import datetime
 import json
 import pathlib
+import os
 import subprocess
 import time
 from collections import deque
@@ -147,6 +148,61 @@ class Monitor:
         self.saw_live = self.last_dist >= 0.05
         self.start_announced = False
 
+    STATE_FIELDS = ("seq", "sent", "fail_streak", "last_send", "last_send_km",
+                    "last_fast_advice", "last_dist", "last_dur", "saw_live", "start_announced")
+
+    def restore_cycle(self):
+        state = read_state(self.state_dir / "coach_state.json", {})
+        if state.get("queue_session") != self.session.get("queue_session"):
+            return
+        for name in self.STATE_FIELDS:
+            if name in state:
+                setattr(self, name, state[name])
+        self.hist = deque(state.get("hist", []))
+        self.hydration_marks_done = set(state.get("hydration_marks_done", []))
+        self.milestones_done = set(state.get("milestones_done", []))
+        self.cycle_started_at = state.get("started_at", time.time())
+        for name in ("neta", "tips", "motivational"):
+            if name in state: setattr(self, name, state[name])
+        if "used" in state: self.used = set(state["used"])
+        self.inflight = state.get("inflight", {})
+
+    def cycle_state(self):
+        state = {name: getattr(self, name) for name in self.STATE_FIELDS}
+        state.update(queue_session=self.session["queue_session"], hist=list(self.hist),
+                     hydration_marks_done=sorted(self.hydration_marks_done),
+                     milestones_done=sorted(self.milestones_done),
+                     started_at=getattr(self, "cycle_started_at", time.time()))
+        state.update(neta=self.neta, tips=self.tips, motivational=self.motivational, used=sorted(self.used))
+        return state
+
+    def save_cycle(self):
+        write_json(self.state_dir / "coach_state.json", self.cycle_state())
+
+    def persist_inflight(self):
+        write_json(self.state_dir / "coach_state.json", dict(self.cycle_base, inflight=self.inflight))
+
+    def run_once(self):
+        self.once = True
+        if self.session.get("state") == "closed":
+            return 0
+        if not self.session.get("queue_session"):
+            qpath = self.cfg.get("queue_json") or str(pathlib.Path(os.environ.get("VCM_QUEUE_DIR", str(pathlib.Path.home() / "vcm/queue")))) + "/queue.json"
+            queue = json.loads(pathlib.Path(qpath).read_text())
+            if queue.get("session") == (self.cfg.get("close") or {}).get("standby_session", "standby"):
+                return 0
+            self.session["queue_session"] = queue["session"]
+            write_json(self.state_dir / "session.json", self.session)
+        self.restore_cycle()
+        self.cycle_started_at = getattr(self, "cycle_started_at", time.time())
+        self.cycle_base = json.loads(json.dumps(self.cycle_state()))
+        self.inflight = getattr(self, "inflight", {})
+        self.delivery_index = 0
+        self.persist_inflight()
+        result = self.run()
+        self.save_cycle()
+        return result
+
     # ---------- infrastructure ----------
     def log(self, obj):
         obj["at"] = datetime.datetime.now(self.tz).isoformat(timespec="seconds")
@@ -178,6 +234,8 @@ class Monitor:
         return 0
 
     def poll(self):
+        if getattr(self, "once", False) and "response" in self.inflight:
+            return self.inflight["response"]
         from poll_diagnostics import summary
         started = time.monotonic()
         secrets = (self.session["token"], self.session["session_id"])
@@ -196,6 +254,9 @@ class Monitor:
                 self.log({"event": "poll_failure", "elapsed_sec": round(time.monotonic()-started, 3),
                           "returncode": result.returncode, "stderr": summary(result.stderr, secrets),
                           "response": summary(response, secrets)})
+            if getattr(self, "once", False):
+                self.inflight["response"] = response
+                self.persist_inflight()
             return response
         except Exception as error:
             def decoded(value):
@@ -227,6 +288,19 @@ class Monitor:
     def say(self, text, attempts=None):
         self.seq += 1
         mid = f"run-{self.seq:03d}"
+        delivery = None
+        if getattr(self, "once", False):
+            deliveries = self.inflight.setdefault("deliveries", [])
+            index = self.delivery_index
+            self.delivery_index += 1
+            if index < len(deliveries):
+                delivery = deliveries[index]
+                mid, text = delivery["id"], delivery["text"]
+                if delivery.get("ok"): return True
+            else:
+                delivery = {"id": mid, "text": text, "ok": False}
+                deliveries.append(delivery)
+            self.persist_inflight()
         verb = "say" if self.cfg.get("audio", True) else "post"
         if attempts is None:
             attempts = int(self.cfg.get("say_attempts", 3))
@@ -258,6 +332,9 @@ class Monitor:
             fallback = True
             ok = self.publish_retry("post", mid, text,
                                     attempts=max(1, attempts))
+        if delivery is not None:
+            delivery["ok"] = ok
+            self.persist_inflight()
         self.log({"event": "say", "id": mid, "ok": ok, "mode": verb,
                   "text": text, "attempts": tried, "fallback": fallback})
         return ok
@@ -351,15 +428,15 @@ class Monitor:
             closing = cfg.get("closing_text",
                                "{distance}キロ。平均ペースはキロ{pace}でした。おつかれさまでした。")
             text = closing.replace("{distance}", dist_spoken(dist)).replace("{pace}", pace_str(avg))
-        return 0 if finish_run(cfg, self.session, text, reason, self.log) else 2
+        return 0 if finish_run(cfg, self.session, text, reason, self.log, once=getattr(self, "once", False)) else 2
 
     def run(self):
         cfg = self.cfg
         self.log({"event": "monitor_start", "seq_from": self.seq})
         progress = load_pending(cfg, self.session)
         if progress:
-            return 0 if finish_run(cfg, self.session, progress["text"], progress["reason"], self.log) else 2
-        start_wall = time.time()
+            return 0 if finish_run(cfg, self.session, progress["text"], progress["reason"], self.log, once=getattr(self, "once", False)) else 2
+        start_wall = getattr(self, "cycle_started_at", time.time())
         max_dur = cfg.get("max_duration_min", 360) * 60
         max_msg = cfg.get("max_messages", 200)
         poll_interval = cfg.get("poll_interval_sec", 20)
@@ -390,6 +467,7 @@ class Monitor:
                     if self.fail_streak >= fail_abort:
                         self.log({"event": "abort", "reason": "poll failing"})
                         return 2
+                    if getattr(self, "once", False): return 0
                     time.sleep(poll_interval)
                     continue
                 self.fail_streak = 0
@@ -443,9 +521,11 @@ class Monitor:
                             self.used.add(comment)
                             self._save_used()
                     self.last_send = now
+                if getattr(self, "once", False): return 0
                 time.sleep(poll_interval)
             except Exception as e:
                 self.log({"event": "loop_error", **error_info(e, "monitor_loop")})
+                if getattr(self, "once", False): return 0
                 time.sleep(poll_interval)
         self.log({"event": "timeout_or_cap"})
         return 0
@@ -453,6 +533,7 @@ class Monitor:
 
 def main():
     ap = argparse.ArgumentParser()
+    ap.add_argument("--once", action="store_true")
     ap.add_argument("--config", required=True)
     ap.add_argument("--session", required=True, help='JSON file: {"session_id", "token"}')
     ap.add_argument("--neta", help="JSON list of prepared comments for this run")
@@ -473,13 +554,11 @@ def main():
     if stock_path:
         stock.update(json.loads(pathlib.Path(stock_path).read_text()))
     try:
-        mon = Monitor(cfg, session, neta, stock)
-    except ValueError as e:
-        ap.error(str(e))
-    try:
-        with file_lock(mon.state_dir / ".monitor.lock", blocking=False):
-            raise SystemExit(mon.run())
+        with file_lock(pathlib.Path(cfg["state_dir"]) / ".monitor.lock", blocking=False):
+            mon = Monitor(cfg, session, neta, stock)
+            raise SystemExit(mon.run_once() if args.once else mon.run())
     except BlockingIOError:
+        if args.once: return
         ap.error("another monitor owns this state directory")
 
 

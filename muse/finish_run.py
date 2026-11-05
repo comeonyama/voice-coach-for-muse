@@ -18,12 +18,23 @@ def load_pending(cfg, session):
                        and all(isinstance(doc.get(key), str)
                                for key in ("session_id", "queue_session", "text", "reason"))
                        and isinstance(doc.get("wait_until"), (int, float)))
-    if value.get("session_id") == session["session_id"]:
+    queue_dir = Path(os.environ.get("VCM_QUEUE_DIR", str(Path.home() / "vcm/queue")))
+    try:
+        queue = json.loads(Path(cfg.get("queue_json") or queue_dir / "queue.json").read_text())
+    except (OSError, ValueError):
+        return None
+    key = session.get("queue_session") or queue.get("session")
+    standby = (cfg.get("close") or {}).get("standby_session", "standby")
+    if key == value.get("queue_session") or (
+        not session.get("queue_session") and key == standby and
+        value.get("stage") in ("standby", "sync", "cleanup", "closed") and
+        value.get("session_id") == session.get("session_id")
+    ):
         return value
     return None
 
 
-def finish_run(cfg, session, text, reason, log):
+def finish_run(cfg, session, text, reason, log, once=False):
     state = Path(cfg["state_dir"])
     checkpoint = state / "finish_state.json"
     queue_dir = Path(os.environ.get("VCM_QUEUE_DIR", str(Path.home() / "vcm/queue")))
@@ -70,6 +81,8 @@ def finish_run(cfg, session, text, reason, log):
             elif stage == "history":
                 result = publish_retry(cfg, "history-append")
             elif stage == "wait":
+                if once and progress["wait_until"] > time.time():
+                    return False
                 time.sleep(max(0, progress["wait_until"] - time.time()))
                 result = {"ok": True}
             else:
@@ -86,7 +99,7 @@ def finish_run(cfg, session, text, reason, log):
             write_json(checkpoint, progress)
 
         current = read_state(state / "session.json", {}, valid=valid_session)
-        if current.get("session_id") == session["session_id"]:
+        if current.get("session_id") == session["session_id"] and current.get("queue_session", progress["queue_session"]) == progress["queue_session"]:
             current["state"] = "closed"
             current["closed_by"] = "finalize_run" if progress["reason"] == "finalize_recovery" else "coach_monitor"
             current["closed_at"] = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
