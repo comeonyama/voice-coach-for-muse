@@ -178,13 +178,34 @@ class Monitor:
         return 0
 
     def poll(self):
-        r = subprocess.run(
-            ["python3", self.cfg["poll_script"],
-             "--session-id", self.session["session_id"],
-             "--token", self.session["token"],
-             "--state", str(self.state_dir / "poll_state.json")],
-            capture_output=True, text=True, timeout=60)
-        return json.loads(r.stdout)
+        from poll_diagnostics import summary
+        started = time.monotonic()
+        secrets = (self.session["token"], self.session["session_id"])
+        result = None
+        try:
+            result = subprocess.run(
+                ["python3", self.cfg["poll_script"],
+                 "--session-id", self.session["session_id"],
+                 "--token", self.session["token"],
+                 "--state", str(self.state_dir / "poll_state.json")],
+                capture_output=True, text=True, timeout=60)
+            response = json.loads(result.stdout)
+            if not isinstance(response, dict):
+                raise ValueError("poll response must be an object")
+            if result.returncode != 0 or not response.get("ok"):
+                self.log({"event": "poll_failure", "elapsed_sec": round(time.monotonic()-started, 3),
+                          "returncode": result.returncode, "stderr": summary(result.stderr, secrets),
+                          "response": summary(response, secrets)})
+            return response
+        except Exception as error:
+            def decoded(value):
+                return value.decode("utf-8", "replace") if isinstance(value, bytes) else value
+            self.log({"event": "poll_exception", **error_info(error, "poll_subprocess"),
+                      "elapsed_sec": round(time.monotonic()-started, 3),
+                      "child_returncode": result.returncode if result else None,
+                      "stderr": summary(decoded(result.stderr if result else getattr(error, "stderr", None)), secrets),
+                      "stdout": summary(decoded(result.stdout if result else getattr(error, "stdout", None)), secrets)})
+            raise
 
     def publish(self, *args):
         result = publisher_call(self.cfg, *args)
