@@ -610,6 +610,7 @@ final class ReceiverModel: NSObject, ObservableObject {
         let speech = AVSpeechUtterance(string: item.message.text)
         speech.voice = AVSpeechSynthesisVoice(language: "ja-JP")
         speech.rate = AVSpeechUtteranceDefaultSpeechRate
+        speech.volume = 1.0
         try activateAudio()
         coachingUtterance = speech
         let deadline = Task {
@@ -629,6 +630,7 @@ final class ReceiverModel: NSObject, ObservableObject {
             completion = continuation
             setStatus(item, "再生中")
             log("読み上げ開始", item.message.id)
+            logSpeechOutput("発話要求", speech)
             coachingSpeaker.speak(speech)
         }
     }
@@ -659,6 +661,11 @@ final class ReceiverModel: NSObject, ObservableObject {
                 self.log("再生開始", item.message.id); self.setStatus(item, "再生中")
             } else { self.resolvePlayback(false) }
         }
+    }
+
+    private func logSpeechOutput(_ stage: String, _ speech: AVSpeechUtterance) {
+        let routes = session.currentRoute.outputs.map { $0.portType.rawValue }.joined(separator: ",")
+        log("TTS出力診断", "\(stage) / route=\(routes) / outputVolume=\(session.outputVolume) / speechVolume=\(speech.volume) / voice=\(speech.voice?.identifier ?? "nil") / sessionActive=\(sessionActive)")
     }
 
     private func activateAudio() throws {
@@ -796,10 +803,16 @@ final class ReceiverModel: NSObject, ObservableObject {
 }
 
 extension ReceiverModel: AVSpeechSynthesizerDelegate {
+    nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didStart utterance: AVSpeechUtterance) {
+        Task { @MainActor in
+            if self.coachingUtterance === utterance { self.logSpeechOutput("didStart", utterance) }
+        }
+    }
+
     nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
         Task { @MainActor in
             self.finishAnnouncement(utterance)
-            if self.coachingUtterance === utterance { self.resolvePlayback(true) }
+            if self.coachingUtterance === utterance { self.logSpeechOutput("didFinish（聴取は未判定）", utterance); self.resolvePlayback(true) }
             if self.finalAnnouncement === utterance { self.stop() }
         }
     }
