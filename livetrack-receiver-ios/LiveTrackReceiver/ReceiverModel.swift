@@ -650,11 +650,16 @@ final class ReceiverModel: NSObject, ObservableObject {
         }
         try Task.checkCancellation()
         while self.paused || self.interruptionActive || self.speaker.isSpeaking { try await Task.sleep(for: .milliseconds(200)) }
+        log("MP3取得完了", "bytes=\(data.count)")
+        try self.activateAudio()
         let audio = try AVAudioPlayer(data: data)
         audio.delegate = self
-        guard audio.prepareToPlay() else { throw ReceiverError.message("prepareToPlay失敗") }
         self.player = audio
-        try self.activateAudio()
+        guard audio.prepareToPlay() else {
+            let routes = session.currentRoute.outputs.map { $0.portType.rawValue }.joined(separator: ",")
+            log("MP3準備失敗", "bytes=\(data.count) / route=\(routes) / outputVolume=\(session.outputVolume) / sessionActive=\(sessionActive)")
+            throw ReceiverError.message("prepareToPlay失敗")
+        }
         return await withCheckedContinuation { continuation in
             self.completion = continuation
             if audio.play() {
