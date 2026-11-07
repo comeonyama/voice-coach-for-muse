@@ -77,7 +77,7 @@ sequenceDiagram
       G-->>I: ok:true / found:false
     end
   end
-  Note over I: found:trueでキック終了。ただし監視起動はまだ未確認
+  Note over I: found:trueでメール検知。発話間隔の同期は継続
   loop 約20秒ごと
     V->>W: GET session.json（認証付き）
   end
@@ -87,7 +87,7 @@ sequenceDiagram
   V->>W: POST op=start-status（monitoring・認証あり）
   I->>W: GET start-status.json（受信ポーリングに相乗り）
   W-->>I: start_id / state / atのみ
-  Note over I: 自分の開始IDがmonitoringなら監視中表示・キック終了
+  Note over I: 自分の開始IDがmonitoringなら監視中表示。同期は継続
   C-->>V: 終了処理でローカルsessionをclosed（次回フックで確認）
   V->>W: POST op=start-status（closed・認証あり）
 ```
@@ -107,7 +107,7 @@ sequenceDiagram
 
 待機中にアプリを再起動しても、開始ID・開始時刻・待機状態・15分通知済みフラグを復元する。停止→再開始では新しいIDと時刻を生成する。
 
-15分未検知で一度通知し、キックは元の開始時刻から最大30分。受信停止時はキャンセルする。GASの `found:true`、または自分の開始IDの `monitoring` でキックを終了する。
+15分未検知で一度通知し、未検知のキックは元の開始時刻から最大30分。検知後・監視中は発話間隔を約30秒ごとに同期し、受信停止または自分の開始IDの `closed` でキャンセルする。任意の `speech_interval` は `per_km` / `per_500m` / `interval:180`。GASは同じ開始IDの設定だけを更新し、セッション再登録やキュー初期化は行わない。
 
 **当日のqueue名はキック停止条件にしない。** 「監視中」の表示には、自分の開始IDに対応するstart-statusの `monitoring` が必要。GASの検知成功だけでは監視中と表示しない。これはVMがプロセスを起動した通知であり、その後の配信成功を保証するものではない。
 

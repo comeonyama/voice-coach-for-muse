@@ -20,6 +20,9 @@ final class ReceiverModel: NSObject, ObservableObject {
         }
     }
     @Published private(set) var monitoring = false
+    @Published var speechInterval: SpeechInterval {
+        didSet { defaults.set(speechInterval.rawValue, forKey: "speechInterval") }
+    }
     @Published var interval: Double { didSet { defaults.set(interval, forKey: "interval") } }
     @Published var timeoutMinutes: Int { didSet { defaults.set(timeoutMinutes, forKey: "timeoutMinutes") } }
     private var timeoutTask: Task<Void, Never>?
@@ -117,6 +120,7 @@ final class ReceiverModel: NSObject, ObservableObject {
         queueURL = defaults.string(forKey: "queueURL") ?? Self.workerURL
         detectionURL = defaults.string(forKey: "detectionURL") ?? ""
         detectionKey = defaults.string(forKey: "detectionKey") ?? ""
+        speechInterval = defaults.string(forKey: "speechInterval").flatMap(SpeechInterval.init(rawValue:)) ?? .threeMinutes
         timeoutMinutes = min(1440, max(1, defaults.object(forKey: "timeoutMinutes") as? Int ?? 30))
         let storedInterval = defaults.double(forKey: "interval")
         interval = storedInterval >= 1 && storedInterval <= 300 ? storedInterval : 5
@@ -146,7 +150,7 @@ final class ReceiverModel: NSObject, ObservableObject {
         log("アプリ準備完了", foregroundOnly ? "前景専用構成" : "Audio / Location構成")
         if let data = defaults.data(forKey: "startRequest.v1"),
            let saved = try? JSONDecoder().decode(StartRequest.self, from: data),
-           ["waiting", "detected"].contains(saved.phase) {
+           ["waiting", "detected", "monitoring"].contains(saved.phase) {
             startRequest = saved
             Task { [weak self] in self?.start(resuming: true) }
         }
@@ -181,6 +185,7 @@ final class ReceiverModel: NSObject, ObservableObject {
         if !resuming { startRequest = detectionEnabled ? StartRequest() : nil }
         monitoring = false
         log("開始検知", startRequest == nil ? "無効：検知URLまたはキーが未設定・不正" : "状態：\(startRequest!.phase)、経過\(Int(Date().timeIntervalSince(startRequest!.since)))秒")
+        if startRequest?.phase == "waiting" { announce("LiveTrack の開始を待っています") }
         startKickIfNeeded()
         beginPolling(source)
     }
@@ -212,28 +217,28 @@ final class ReceiverModel: NSObject, ObservableObject {
             guard status.start_id == requestID else { return }
             monitoring = status.state == "monitoring"
             if monitoring {
-                if startRequest?.phase != "monitoring" { log("開始検知", "監視起動を確認・キック終了") }
+                if startRequest?.phase != "monitoring" { log("開始検知", "監視起動を確認・発話間隔の同期を継続") }
                 startRequest?.phase = "monitoring"
-                cancelKick()
-            } else if status.state == "closed" { startRequest?.phase = "closed" }
+            } else if status.state == "closed" { startRequest?.phase = "closed"; cancelKick() }
         } catch { /* Public status failures do not affect reception or playback. */ }
     }
 
     private func startKickIfNeeded() {
-        guard kickTask == nil, let start = startRequest, start.phase == "waiting",
-              let url = LiveTrackKick.endpoint(detectionURL, key: detectionKey, sid: start.id, since: start.since) else { return }
+        guard kickTask == nil, let start = startRequest,
+              ["waiting", "detected", "monitoring"].contains(start.phase), detectionEnabled else { return }
         let token = runToken
-        announce("LiveTrack の開始を待っています")
         kickTask = Task {
             while !Task.isCancelled, running, token == runToken, startRequest?.id == start.id {
                 let elapsed = Date().timeIntervalSince(start.since)
-                if elapsed >= 1800 { log("開始検知", "30分経過・キック終了"); startRequest?.phase = "expired"; return }
-                if elapsed >= 900 && startRequest?.warned == false {
+                if startRequest?.phase == "waiting" && elapsed >= 1800 { log("開始検知", "30分経過・キック終了"); startRequest?.phase = "expired"; return }
+                if startRequest?.phase == "waiting" && elapsed >= 900 && startRequest?.warned == false {
                     startRequest?.warned = true
                     announce("LiveTrack の開始メールが見つかりません")
                 }
                 do {
                     log("開始検知", "GASへキック送信")
+                    guard let url = LiveTrackKick.endpoint(detectionURL, key: detectionKey,
+                        sid: start.id, since: start.since, speechInterval: speechInterval) else { return }
                     let request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 10)
                     let (data, response) = try await network.data(for: request)
                     try Task.checkCancellation()
@@ -241,7 +246,10 @@ final class ReceiverModel: NSObject, ObservableObject {
                     if let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) {
                         let reply = try JSONDecoder().decode(LiveTrackKick.Reply.self, from: data)
                         log("開始検知", "応答 ok=\(reply.ok)、found=\(reply.found == true)")
-                        if reply.ok && reply.found == true { log("開始検知", "メール検知・キック終了、監視起動待ち"); startRequest?.phase = "detected"; return }
+                        if reply.ok && reply.found == true && startRequest?.phase == "waiting" {
+                            log("開始検知", "メール検知・監視起動待ち、発話間隔の同期を継続")
+                            startRequest?.phase = "detected"
+                        }
                     } else if let http = response as? HTTPURLResponse {
                         log("開始検知", "HTTP \(http.statusCode)、次回再試行")
                     }
@@ -250,7 +258,7 @@ final class ReceiverModel: NSObject, ObservableObject {
                     let failure = error as NSError
                     log("開始検知", "通信・応答エラー domain=\(failure.domain) code=\(failure.code)、次回再試行")
                 }
-                do { try await Task.sleep(for: .seconds(min(30, max(0, 1800 - Date().timeIntervalSince(start.since))))) } catch { return }
+                do { try await Task.sleep(for: .seconds(30)) } catch { return }
             }
         }
     }

@@ -204,6 +204,19 @@ struct ContentView: View {
                     Text("サンプルでは3件の短い確認音を受信できます。設定済みの接続先URLは置き換わります。")
                         .font(.caption).foregroundStyle(.secondary)
                 }
+                Section {
+                    Picker("発話間隔", selection: $model.speechInterval) {
+                        ForEach(SpeechInterval.allCases, id: \.self) { option in
+                            Text(option.label).tag(option)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .accessibilityLabel("発話間隔")
+                } header: {
+                    Text("発話間隔")
+                } footer: {
+                    Text("標準は3分です。受信中も変更できます。次回の同期後、前回の送信からの距離・時間を基準に反映します。受信の確認間隔とは別の設定です。")
+                }
                 Section("受信タイムアウト") {
                     Stepper("新着なしで自動停止：\(model.timeoutMinutes)分", value: $model.timeoutMinutes, in: 1...1440)
                         .disabled(model.settingsLocked)

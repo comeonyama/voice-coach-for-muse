@@ -7,8 +7,7 @@
  * 使い方:
  *   - Web アプリとしてデプロイすると、iOS アプリから URL を叩いて
  *     起動できる (doGet)。?key=<KICK_SECRET> が必須。
- *   - scheduledCheck() を時間主導トリガーに登録すれば、キックなしでも
- *     定期検知できる (フォールバック用)。
+ *   - start_id / since は必須。speech_interval は任意。時間主導トリガーは使わない。
  *
  * スクリプトプロパティ (プロジェクトの設定 > スクリプト プロパティ):
  *   KICK_SECRET   : アプリからのキック用シークレット (自分で決める)
@@ -49,7 +48,7 @@ function doGet(e) {
   }
   try {
     workerBase_(); // メールの有無や処理済み判定に関係なく設定漏れを通知する
-    return jsonOut_(findAndPost_(e.parameter.start_id, e.parameter.since));
+    return jsonOut_(findAndPost_(e.parameter.start_id, e.parameter.since, e.parameter.speech_interval));
   } catch (err) {
     var message = err && err.message;
     var safe = ['WORKER_BASE is not set', 'start_id must be a UUID', 'since must be ISO 8601 UTC',
@@ -87,22 +86,34 @@ function extract_(html) {
 }
 
 /** Gmail を検索し、未処理の開始メールがあれば Worker へ渡す。 */
-function findAndPost_(start_id, since) {
+function findAndPost_(start_id, since, speech_interval) {
   var lock = LockService.getScriptLock();
   lock.waitLock(10000);
-  try { return findAndPostLocked_(start_id, since); }
+  try { return findAndPostLocked_(start_id, since, speech_interval); }
   finally { lock.releaseLock(); }
 }
 
-function findAndPostLocked_(start_id, since) {
+function findAndPostLocked_(start_id, since, speech_interval) {
   if (typeof start_id !== 'string' || !/^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(start_id))
     throw new Error('start_id must be a UUID');
   if (typeof since !== 'string' || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/.test(since) || !isFinite(Date.parse(since)))
     throw new Error('since must be ISO 8601 UTC');
   var base = workerBase_();
   var p = props_();
-  if (p.getProperty('LAST_START_ID') === start_id && p.getProperty('LAST_START_SESSION_ID'))
+  if (p.getProperty('LAST_START_ID') === start_id && p.getProperty('LAST_START_SESSION_ID')) {
+    // Update only the preference. Never repost a session, refresh its age,
+    // reprocess mail, or reopen a completed run on a repeated kick.
+    if (speech_interval !== undefined && speech_interval !== '') {
+      var update = UrlFetchApp.fetch(base + '/upload?op=session-settings', {
+        method: 'post', contentType: 'application/json',
+        headers: { 'X-Upload-Token': p.getProperty('UPLOAD_TOKEN') },
+        payload: JSON.stringify({start_id: start_id, speech_interval: speech_interval}),
+        muteHttpExceptions: true
+      });
+      if (update.getResponseCode() !== 200) return {ok:false, found:true};
+    }
     return { ok: true, found: true, already: true, session_id: p.getProperty('LAST_START_SESSION_ID') };
+  }
   var raw = p.getProperty('PROCESSED_MAIL_IDS');
   var processed = raw ? JSON.parse(raw) : [];
   if (!Array.isArray(processed) || processed.some(function(id) {
@@ -155,6 +166,7 @@ function findAndPostLocked_(start_id, since) {
     state: 'live',
     source: 'gas'
   };
+  if (speech_interval !== undefined && speech_interval !== '') payload.speech_interval = speech_interval;
   var resp = UrlFetchApp.fetch(base + '/upload?op=session', {
     method: 'post',
     contentType: 'application/json',

@@ -145,23 +145,38 @@ enum QueueURL {
     }
 }
 
+enum SpeechInterval: String, CaseIterable {
+    case perKm = "per_km"
+    case per500m = "per_500m"
+    case threeMinutes = "interval:180"
+
+    var label: String {
+        switch self {
+        case .perKm: return "1km"
+        case .per500m: return "500m"
+        case .threeMinutes: return "3分"
+        }
+    }
+}
+
 enum LiveTrackKick {
     struct Reply: Decodable {
         let ok: Bool
         let found: Bool?
     }
 
-    static func endpoint(_ raw: String, key: String, sid: UUID? = nil, since: Date? = nil) -> URL? {
+    static func endpoint(_ raw: String, key: String, sid: UUID? = nil, since: Date? = nil, speechInterval: SpeechInterval? = nil) -> URL? {
         guard !key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               var parts = URLComponents(string: raw.trimmingCharacters(in: .whitespacesAndNewlines)),
               parts.scheme?.lowercased() == "https", let host = parts.host, !host.isEmpty,
               parts.user == nil, parts.password == nil, parts.path.hasSuffix("/exec") else { return nil }
-        var items = (parts.queryItems ?? []).filter { !["key", "sid", "start_id", "since"].contains($0.name) }
+        var items = (parts.queryItems ?? []).filter { !["key", "sid", "start_id", "since", "speech_interval"].contains($0.name) }
         items.append(URLQueryItem(name: "key", value: key))
         if let sid, let since {
             items.append(URLQueryItem(name: "start_id", value: sid.uuidString))
             items.append(URLQueryItem(name: "since", value: ISO8601DateFormatter().string(from: since)))
         }
+        if let speechInterval { items.append(URLQueryItem(name: "speech_interval", value: speechInterval.rawValue)) }
         parts.queryItems = items
         parts.percentEncodedQuery = parts.percentEncodedQuery?.replacingOccurrences(of: "+", with: "%2B")
         parts.fragment = nil

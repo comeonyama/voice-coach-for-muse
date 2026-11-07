@@ -11,6 +11,14 @@ import Foundation
         precondition(parameters.filter { $0.name == "start_id" }.count == 1)
         precondition(parameters.first { $0.name == "start_id" }?.value == start.id.uuidString)
         precondition(parameters.first { $0.name == "since" }?.value?.hasSuffix("Z") == true)
+        for preference in SpeechInterval.allCases {
+            let url = LiveTrackKick.endpoint("https://example.com/exec?speech_interval=old", key: "secret",
+                sid: start.id, since: start.since, speechInterval: preference)!
+            let query = URLComponents(url: url, resolvingAgainstBaseURL: false)!.queryItems!
+            precondition(query.filter { $0.name == "speech_interval" }.count == 1)
+            precondition(query.first { $0.name == "speech_interval" }?.value == preference.rawValue)
+        }
+        precondition(!parameters.contains { $0.name == "speech_interval" })
         let source = QueueURL.source("https://example.com/runs/queue.json?token=abc")!
         precondition(QueueURL.audio("audio/m1.mp3", relativeTo: source)?.absoluteString == "https://example.com/runs/audio/m1.mp3")
         precondition(QueueURL.source("file:///tmp/queue.json") == nil)

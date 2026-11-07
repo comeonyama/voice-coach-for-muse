@@ -39,8 +39,12 @@ def validate_config(cfg):
         number("timezone_offset_hours", cfg["timezone_offset_hours"], -23.99)
         if cfg["timezone_offset_hours"] >= 24:
             fail("timezone_offset_hours", "number less than 24")
-    if cfg.get("send_mode", "per_km") not in ("per_km", "interval"):
-        fail("send_mode", "per_km or interval")
+    if cfg.get("send_mode", "per_km") not in ("per_km", "distance", "interval"):
+        fail("send_mode", "per_km, distance or interval")
+    if "send_distance_km" in cfg:
+        number("send_distance_km", cfg["send_distance_km"], 0.001)
+        if cfg["send_distance_km"] not in (0.5, 1.0):
+            fail("send_distance_km", "0.5 or 1.0")
     bands = cfg.get("hr_bands", [])
     if not isinstance(bands, list):
         fail("hr_bands", "array of {max, label}")

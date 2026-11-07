@@ -3,14 +3,14 @@ const start_id='bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb';
 const since=()=>new Date().toISOString();
 function fixture(properties = {}) {
   const p = {WORKER_BASE:'https://fixture.workers.dev', KICK_SECRET:'fixture', ...properties};
-  const state = {messages:[], posts:0, status:200, pages:0};
+  const state = {messages:[], posts:0, status:200, pages:0, requests:[]};
   const c = {
     LockService:{getScriptLock:()=>({waitLock:()=>{},releaseLock:()=>{}})},
     PropertiesService:{getScriptProperties:()=>({getProperty:k=>p[k],setProperty:(k,v)=>p[k]=v})},
     Logger:{log:()=>{}},
     ContentService:{MimeType:{JSON:'json'},createTextOutput:s=>({setMimeType:()=>JSON.parse(s)})},
     GmailApp:{search:(q,offset,size)=>{state.pages++;return state.messages.slice(offset,offset+size).map(m=>({getMessages:()=>[m]}));}},
-    UrlFetchApp:{fetch:()=>{state.posts++;return {getResponseCode:()=>state.status,getContentText:()=> 'fixture failure'};}}
+    UrlFetchApp:{fetch:(url,options)=>{state.requests.push({url,body:JSON.parse(options.payload)});state.posts++;return {getResponseCode:()=>state.status,getContentText:()=> 'fixture failure'};}}
   };
   vm.createContext(c);vm.runInContext(fs.readFileSync(__dirname+'/livetrack_detector.gs','utf8'),c);
   return {p,state,c};
@@ -57,3 +57,23 @@ console.log('PASS required start_id/since, start-time gate, same-start idempoten
  assert.equal(reply.ok,true);assert.equal(reply.found,true);assert.equal(state.posts,1);
 }
 console.log('PASS doGet accepts start_id and rejects legacy sid');
+
+{
+ const {p,state,c}=fixture();state.messages=[mail('fresh',0)];
+ const kick=value=>c.doGet({parameter:{key:'fixture',start_id,since:since(), ...(value===undefined?{}:{speech_interval:value})}});
+ assert.equal(kick('per_500m').ok,true);
+ assert.equal(state.requests[0].body.speech_interval,'per_500m');
+ const pages=state.pages, processed=p.PROCESSED_MAIL_IDS;
+ assert.equal(kick('interval:180').ok,true);
+ assert.ok(state.requests[1].url.endsWith('op=session-settings'));
+ assert.deepEqual(state.requests[1].body,{start_id,speech_interval:'interval:180'});
+ assert.equal(state.pages,pages);assert.equal(p.PROCESSED_MAIL_IDS,processed);
+ state.status=500;assert.equal(kick('per_km').ok,false);
+ state.status=200;assert.equal(kick('per_km').ok,true);
+ const posts=state.posts;assert.equal(kick(undefined).ok,true);assert.equal(state.posts,posts);
+}
+{
+ const {state,c}=fixture();state.messages=[mail('fresh',0)];
+ c.findAndPost_(start_id,since());assert.equal('speech_interval' in state.requests[0].body,false);
+}
+console.log('PASS cadence initial forwarding, same-start update without mail or session repost, retry and legacy omission');

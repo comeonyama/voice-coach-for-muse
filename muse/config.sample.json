@@ -29,7 +29,7 @@
   "queue_json": "./queue/queue.json",
   "say_attempts": 3,
   "say_retry_backoff_sec": 5,
-  "send_mode": "per_km",
+  "send_mode": "interval",
   "stale_finish_sec": 600,
   "state_dir": "./state",
   "stock_file": "./comment_stock.json",
@@ -57,7 +57,7 @@
   "timezone_offset_hours": 9,
   "max_duration_min": 360,
   "max_messages": 200,
-  "send_interval_sec": 60,
+  "send_interval_sec": 180,
   "progress_every": 0,
   "motivational_every": 0,
   "altitude": {
@@ -65,5 +65,6 @@
     "downhill_net_loss_m": 20,
     "climb_gain_m": 20,
     "finish_ascent_m": 50
-  }
+  },
+  "send_distance_km": 1.0
 }

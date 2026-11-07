@@ -7,7 +7,7 @@ This monitor owns everything that must behave deterministically:
   - the polling loop and its interval,
   - the message spine (distance read in Japanese, average pace,
     heart-rate judgment from configured bands),
-  - when to speak (per-km or fixed interval, plus event triggers:
+  - when to speak (distance steps or fixed interval, plus event triggers:
     sustained too-fast pace, hydration reminders, milestones),
   - the no-repeat rule for comments (persisted in a file that survives
     restarts and content switches),
@@ -123,6 +123,7 @@ class Monitor:
         self.hist = deque()
         self.last_send = 0.0
         self.last_send_km = 0
+        self.last_send_distance_km = 0.0
         self.last_fast_advice = 0.0
         self.hydration_marks_done = set()
         self.milestones_done = set()
@@ -153,7 +154,7 @@ class Monitor:
         self.saw_live = self.last_dist >= 0.05
         self.start_announced = False
 
-    STATE_FIELDS = ("seq", "sent", "fail_streak", "last_send", "last_send_km",
+    STATE_FIELDS = ("seq", "sent", "fail_streak", "last_send", "last_send_km", "last_send_distance_km",
                     "last_fast_advice", "last_dist", "last_dur", "saw_live", "start_announced",
                     "total_ascent_m", "last_elevation_split")
 
@@ -164,6 +165,8 @@ class Monitor:
         for name in self.STATE_FIELDS:
             if name in state:
                 setattr(self, name, state[name])
+        if "last_send_distance_km" not in state:
+            self.last_send_distance_km = float(state.get("last_send_km", 0))
         self.hist = deque(state.get("hist", []))
         self.hydration_marks_done = set(state.get("hydration_marks_done", []))
         self.milestones_done = set(state.get("milestones_done", []))
@@ -456,6 +459,29 @@ class Monitor:
                 text += f"獲得標高は約{round(self.total_ascent_m)}メートルでした。"
         return 0 if finish_run(cfg, self.session, text, reason, self.log, once=getattr(self, "once", False)) else 2
 
+    def cadence(self):
+        """Resolve a live session preference without mutating server defaults."""
+        local = read_state(self.state_dir / "session.json", {}, valid=valid_session)
+        source = self.session
+        if (local.get("session_id") == self.session.get("session_id")
+                and local.get("queue_session") == self.session.get("queue_session")
+                and local.get("start_id") == self.session.get("start_id")):
+            source = local
+        override = source.get("speech_interval")
+        if override == "per_km": return "distance", 1.0
+        if override == "per_500m": return "distance", 0.5
+        if override == "interval:180": return "interval", 180
+        mode = self.cfg.get("send_mode", "per_km")
+        if mode == "interval": return mode, self.cfg.get("send_interval_sec", 60)
+        return "distance", 1.0 if mode == "per_km" else self.cfg.get("send_distance_km", 1.0)
+
+    def send_due(self, dist, now):
+        mode, step = self.cadence()
+        if mode == "interval":
+            return now - self.last_send >= step
+        return ((self.sent == 0 and dist >= 0.3)
+                or (self.sent > 0 and dist - self.last_send_distance_km >= step - 1e-9))
+
     def run(self):
         cfg = self.cfg
         self.log({"event": "monitor_start", "seq_from": self.seq})
@@ -466,8 +492,6 @@ class Monitor:
         max_dur = cfg.get("max_duration_min", 360) * 60
         max_msg = cfg.get("max_messages", 200)
         poll_interval = cfg.get("poll_interval_sec", 20)
-        mode = cfg.get("send_mode", "per_km")
-        send_interval = cfg.get("send_interval_sec", 60)
         stale_sec = cfg.get("stale_finish_sec", 600)
         # ~10 minutes of failed polls before giving up: a brief LiveTrack
         # API outage (about 2 minutes on 2026-11-03) must not end monitoring.
@@ -538,18 +562,13 @@ class Monitor:
                     if announce:
                         self.say(announce)
 
-                due = False
-                if mode == "interval":
-                    due = (now - self.last_send >= send_interval)
-                else:  # per_km: first message early, then each new km
-                    km = int(dist)
-                    due = (self.sent == 0 and dist >= 0.3) or km > self.last_send_km
-                if due:
+                if self.send_due(dist, now):
                     comment, is_advice = self.pick_comment(dist, dur, session.get("start"),
                                                            recent_pace, now)
                     if self.say(self.spine(dist, avg, hr) + comment):
                         self.sent += 1
                         self.last_send_km = int(dist)
+                        self.last_send_distance_km = dist
                         if not is_advice:
                             self.used.add(comment)
                             self._save_used()

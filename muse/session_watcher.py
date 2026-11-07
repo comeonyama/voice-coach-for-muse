@@ -143,6 +143,7 @@ class Watcher:
                 "mail_id": sess.get("mail_id", ""), "state": "live",
                 "started_mail_at": sess.get("received_at", ""), "source": "session_watcher",
                 "queue_session": qsession,
+                **({"speech_interval": sess["speech_interval"]} if sess.get("speech_interval") in ("per_km", "per_500m", "interval:180") else {}),
             })
         st = load_watcher_state()
         retries = st.get("retries", 0) if resume else 0
@@ -188,6 +189,17 @@ class Watcher:
         if status != 200 or not isinstance(sess, dict) or not valid_session(sess):
             return
         if local.get("session_id") == sess["session_id"]:
+            if (not self.args.dry_run and local.get("state") == "live"
+                    and local.get("start_id") == sess.get("start_id")):
+                preference = sess.get("speech_interval")
+                if preference not in ("per_km", "per_500m", "interval:180"):
+                    preference = None
+                if local.get("speech_interval") != preference:
+                    if preference is None:
+                        local.pop("speech_interval", None)
+                    else:
+                        local["speech_interval"] = preference
+                    write_json(self.session_path(), local)
             return
         # The monitor's next single cycle finishes the current run first.
         if local.get("state") == "live":
