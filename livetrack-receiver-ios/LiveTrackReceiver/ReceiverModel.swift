@@ -6,7 +6,6 @@ import UIKit
 @MainActor
 final class ReceiverModel: NSObject, ObservableObject {
     static let workerURL = "https://vcm-queue.chibiken.workers.dev"
-    static let demoURL = "https://muse-livetrack-receiver-20261101.sunny-moon-4267.chatgpt.site/demo-queue.json"
     @Published var queueURL: String { didSet { cachedRuns = nil; defaults.set(queueURL, forKey: "queueURL") } }
     var detectionURL: String { didSet { defaults.set(detectionURL, forKey: "detectionURL") } }
     var detectionKey: String { didSet { defaults.set(detectionKey, forKey: "detectionKey") } }
@@ -106,6 +105,7 @@ final class ReceiverModel: NSObject, ObservableObject {
     private var current: PlaybackItem?
     private var player: AVAudioPlayer?
     private var completion: CheckedContinuation<Bool, Never>?
+    private var testOutputSummary = ""
     private var sessionActive = false
     private var interruptionActive = false
     private var resumeAllowed = true
@@ -140,7 +140,7 @@ final class ReceiverModel: NSObject, ObservableObject {
         coachingSpeaker.usesApplicationAudioSession = true
         speaker.delegate = self
         speaker.usesApplicationAudioSession = true
-        logs = defaults.stringArray(forKey: "playbackDiagnostics") ?? []
+        logs = ((defaults.stringArray(forKey: "playbackDiagnostics") ?? []) + (defaults.stringArray(forKey: "audioTestDiagnostics") ?? [])).sorted()
         location.delegate = self
         location.activityType = .fitness
         location.desiredAccuracy = kCLLocationAccuracyHundredMeters
@@ -161,6 +161,12 @@ final class ReceiverModel: NSObject, ObservableObject {
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         logs.append("\(formatter.string(from: Date())) [\(event)] \(detail)")
         if logs.count > 2000 { logs.removeFirst(logs.count - 2000) }
+        // Only persist test events and numeric/route-type diagnostics, never URLs or keys.
+        if event == "音声テスト出力" || event == "音声テスト完了" {
+            var saved = defaults.stringArray(forKey: "audioTestDiagnostics") ?? []
+            if let last = logs.last { saved.append(last) }
+            defaults.set(Array(saved.suffix(30)), forKey: "audioTestDiagnostics")
+        }
     }
 
     func start(resuming: Bool = false) {
@@ -292,11 +298,26 @@ final class ReceiverModel: NSObject, ObservableObject {
     }
 
     func testPlay() {
-        guard !busy, pending.isEmpty, !interruptionActive, !offline, !stoppingForTimeout else {
-            notice = "音声の再生や一時停止が終わってからお試しください。"; return
+        let blocked: String?
+        if stoppingForTimeout { blocked = "受信タイムアウトの終了処理中です。終了後にお試しください。" }
+        else if interruptionActive { blocked = "電話などによる音声の割り込み中です。終了後にお試しください。" }
+        else if offline { blocked = "通信エラーで再生が停止しています。メイン画面で受信を停止してからお試しください。" }
+        else if paused { blocked = "音声が一時停止中です。メイン画面で再開または停止してからお試しください。" }
+        else if busy || !pending.isEmpty || playbackTask != nil { blocked = "音声を再生中、または再生待ちです。終了後にお試しください。" }
+        else { blocked = nil }
+        if let blocked {
+            notice = blocked
+            log("音声テスト不可", blocked)
+            return
         }
-        let message = CoachingMessage(id: "test", ts: ISO8601DateFormatter().string(from: Date()), audio: nil, text: "音声を確認しています。音楽の音量が下がり、終了後に元に戻るか確認してください。")
-        pending.append(PlaybackItem(message: message, key: nil, url: nil))
+        guard let url = Bundle.main.url(forResource: "test-coaching", withExtension: "mp3") else {
+            notice = "テスト用MP3が見つかりません。アプリを再インストールしてください。"
+            log("音声テスト不可", "test-coaching.mp3 が見つかりません")
+            return
+        }
+        notice = "同梱MP3で音声を確認しています。"
+        let message = CoachingMessage(id: "test", ts: ISO8601DateFormatter().string(from: Date()), audio: "test-coaching.mp3", text: "音声を確認しています。音楽の音量が下がり、終了後に元に戻るか確認してください。")
+        pending.append(PlaybackItem(message: message, key: nil, url: url))
         drain()
     }
 
@@ -463,6 +484,10 @@ final class ReceiverModel: NSObject, ObservableObject {
                     let elapsed = String(format: "%.2f", Date().timeIntervalSince(began))
                     self.log("再生終了", "\(item.message.id) / \(elapsed)秒（割り込み待ち含む）")
                     self.setStatus(item, "再生済み")
+                    if item.isTest {
+                        self.notice = "テストMP3の再生処理が完了しました（聴取は未確認）。\(self.testOutputSummary) 聞こえない場合は、再度テスト中にiPhoneの音量ボタンとコントロールセンターの出力先を確認してください。"
+                        self.log("音声テスト完了", "\(elapsed)秒 / \(self.testOutputSummary)")
+                    }
                     if let key = item.key {
                         self.ledger.complete(key)
                         self.savePlayed()
@@ -471,6 +496,7 @@ final class ReceiverModel: NSObject, ObservableObject {
                     if Task.isCancelled { break }
                     self.log("再生エラー", "\(item.message.id): \(error.localizedDescription)")
                     self.setStatus(item, "再生エラー")
+                    if item.isTest { self.notice = "音声テストに失敗しました：\(error.localizedDescription)" }
                     self.player?.stop(); self.releaseAudio()
                 }
                 self.player = nil; self.current = nil; self.updateCount()
@@ -610,11 +636,28 @@ final class ReceiverModel: NSObject, ObservableObject {
         }
     }
 
-    private func playSpeech(_ item: PlaybackItem) async throws -> Bool {
-        try Task.checkCancellation()
+    private func waitForAudioReady(_ item: PlaybackItem) async throws {
+        let started = ContinuousClock.now
+        var logged = false
         while paused || interruptionActive || speaker.isSpeaking {
+            try Task.checkCancellation()
+            if !logged {
+                log("音声開始待機", "\(item.message.id) / paused=\(paused) interruption=\(interruptionActive) announcement=\(speaker.isSpeaking)")
+                logged = true
+            }
+            if started.duration(to: .now) >= .seconds(30) {
+                log("音声開始待機タイムアウト", "\(item.message.id) / paused=\(paused) interruption=\(interruptionActive) announcement=\(speaker.isSpeaking)")
+                throw ReceiverError.message("音声の開始待ちが30秒を超えました")
+            }
             try await Task.sleep(for: .milliseconds(200))
         }
+        try Task.checkCancellation()
+        if logged { log("音声開始待機終了", item.message.id) }
+    }
+
+    private func playSpeech(_ item: PlaybackItem) async throws -> Bool {
+        try Task.checkCancellation()
+        try await waitForAudioReady(item)
         let speech = AVSpeechUtterance(string: item.message.text)
         speech.voice = AVSpeechSynthesisVoice(language: "ja-JP")
         speech.rate = AVSpeechUtteranceDefaultSpeechRate
@@ -657,12 +700,18 @@ final class ReceiverModel: NSObject, ObservableObject {
             data = download
         }
         try Task.checkCancellation()
-        while self.paused || self.interruptionActive || self.speaker.isSpeaking { try await Task.sleep(for: .milliseconds(200)) }
+        try await waitForAudioReady(item)
         log("MP3取得完了", "bytes=\(data.count)")
         try self.activateAudio()
         let audio = try AVAudioPlayer(data: data)
         audio.delegate = self
         self.player = audio
+        if item.isTest {
+            let routes = session.currentRoute.outputs.map { $0.portType.rawValue }.joined(separator: ", ")
+            testOutputSummary = "出力先：\(routes.isEmpty ? "なし" : routes)、端末音量：\(Int((session.outputVolume * 100).rounded()))%。"
+            notice = "同梱MP3を再生します。\(testOutputSummary)"
+            log("音声テスト出力", "\(testOutputSummary) playerVolume=\(audio.volume) duration=\(audio.duration) sessionActive=\(sessionActive)")
+        }
         guard audio.prepareToPlay() else {
             let routes = session.currentRoute.outputs.map { $0.portType.rawValue }.joined(separator: ",")
             log("MP3準備失敗", "bytes=\(data.count) / route=\(routes) / outputVolume=\(session.outputVolume) / sessionActive=\(sessionActive)")

@@ -191,18 +191,14 @@ struct ContentView: View {
         @Bindable var draft = detectionDraft
         return NavigationStack {
             Form {
-                Section("接続先") {
-                    TextField("ベースURL または queue.json のURL", text: $model.queueURL, axis: .vertical)
+                Section("Worker エンドポイント") {
+                    TextField("Worker のURL または queue.json のURL", text: $model.queueURL, axis: .vertical)
                         .keyboardType(.URL).textInputAutocapitalization(.never).autocorrectionDisabled()
                         .disabled(model.settingsLocked)
-                    Button("Worker に切り替える") { model.queueURL = ReceiverModel.workerURL }.disabled(model.settingsLocked)
-                    Button("サンプルURLで試す") { model.queueURL = ReceiverModel.demoURL }.disabled(model.settingsLocked)
                     Text(model.settingsLocked
                          ? "接続先を変更するには、メイン画面で受信・再生を停止してください。"
-                         : "コーチングを受け取るURLを指定します。設定は自動保存されます。変更後はメイン画面で開始し、最終受信時刻を確認してください。")
+                         : "コーチングを受け取る Worker の URL を指定します。設定は自動保存されます。変更後はメイン画面で開始し、最終受信時刻を確認してください。")
                         .font(.caption)
-                    Text("サンプルでは3件の短い確認音を受信できます。設定済みの接続先URLは置き換わります。")
-                        .font(.caption).foregroundStyle(.secondary)
                 }
                 Section {
                     Picker("発話間隔", selection: $model.speechInterval) {
@@ -215,7 +211,7 @@ struct ContentView: View {
                 } header: {
                     Text("発話間隔")
                 } footer: {
-                    Text("標準は3分です。受信中も変更できます。次回の同期後、前回の送信からの距離・時間を基準に反映します。受信の確認間隔とは別の設定です。")
+                    Text("標準は3分です。受信中も変更できます。次回の同期後、前回の送信からの距離・時間を基準に反映します。新着の確認間隔とは別の設定です。")
                 }
                 Section("受信タイムアウト") {
                     Stepper("新着なしで自動停止：\(model.timeoutMinutes)分", value: $model.timeoutMinutes, in: 1...1440)
@@ -244,17 +240,19 @@ struct ContentView: View {
                 }
                 Section {
                     Button("音声テスト", systemImage: "speaker.wave.2") { model.testPlay() }
-                        .disabled(model.busy || model.pendingCount > 0)
+                    if !model.notice.isEmpty {
+                        Text(model.notice).font(.footnote)
+                    }
                 } header: {
                     Text("サウンドチェック")
                 } footer: {
-                    Text("音楽を流しながら、イヤホンで音量の変化を確認できます。")
+                    Text("同梱のテストMP3を再生します。音楽を流しながら、イヤホンで音声と音量の低下・復帰を確認できます。")
                 }
                 Section {
                     DisclosureGroup("詳細設定") {
-                        Stepper("受信の確認間隔：\(Int(model.interval))秒", value: $model.interval, in: 1...300, step: 1)
+                        Stepper("新着の確認間隔：\(Int(model.interval))秒", value: $model.interval, in: 1...300, step: 1)
                             .disabled(model.settingsLocked)
-                        Text("通常は5秒のままで利用できます。変更する場合は受信・再生を停止してください。")
+                        Text("コーチングの新着を Worker へ確認しに行く間隔です。発話間隔とは別で、通常は5秒のまま利用できます。変更する場合は受信・再生を停止してください。")
                             .font(.caption)
                     }
                     NavigationLink("詳細ログ") { logScreen }
