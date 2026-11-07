@@ -1,5 +1,8 @@
 # 発行スクリプト
 
+> **注記（2026-11-07）:** このディレクトリは旧 XServer 構成（upload.php）向けの発行スクリプトの記録です。現行の発行は [`muse/publish.py`](../muse/publish.py) が Cloudflare Worker に対して行います。セットアップは [SETUP.md](../SETUP.md) を参照してください。以下の内容は当時の版の記録として保持しています。
+
+
 `publish.py` はユーザー提供の Muse 側原本（`custom.livetrack-upload/bin/publish.py` 相当）です。受領した版は既に環境変数から認証情報を取得する設計のため、コードを変更せず格納しました。Muse 固有の資格情報ストアや connector.yaml は不要です。
 
 ## 必要なもの

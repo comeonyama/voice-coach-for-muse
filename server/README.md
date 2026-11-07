@@ -1,5 +1,8 @@
 # HTTPS アップロード受信プログラム
 
+> **注記（2026-11-07）:** 本番の配信基盤は 2026-11-03 に Cloudflare Worker + R2（[`worker/`](../worker/)）へ移行しました。この PHP 版は旧構成の記録であり、現行の正本ではありません。セットアップは [SETUP.md](../SETUP.md) を参照してください。
+
+
 `upload.php` は discoverroutes.jp の本番に設置済みの cleanup 対応版の作業コピーです。2026-11-01 に本番ファイルの SHA-256 と一致することを確認しました。
 
 - SHA-256: `f4a202eb8efc14018cb2b9f264b3086090b97fc44d6b33fb665eb7fe36bc4b21`
