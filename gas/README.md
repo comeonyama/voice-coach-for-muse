@@ -11,7 +11,7 @@ GAS は、iPhone アプリからのリクエストを受けて Gmail の Garmin 
 | [livetrack_detector.gs](livetrack_detector.gs) | Apps Script に貼り付けるコード |
 | [test_processed.cjs](test_processed.cjs) | Gmail・Worker を模擬したローカルテスト |
 
-GAS の正本はルートの `gas/` です。Muse 環境へのプログラム配置とは別に、Google Apps Script へ配置します。ディレクトリ移動だけなら再デプロイは不要です。
+GAS の正本はルートの `gas/` です。Muse 環境へのプログラム配置とは別に、Google Apps Script へ配置します。
 
 利用には、開始メールが届く Gmail アカウントと、[Worker](../worker/worker.js) の配置が必要です。発話間隔の同期には、Worker の `session-settings` と Muse 側の watcher・monitor も対応している必要があります。
 
