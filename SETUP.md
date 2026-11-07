@@ -43,7 +43,9 @@ iOS アプリ ──キューを取得──▶ 新着を再生 (再生中は音
 
 ## ステップ 2: 配信基盤を作る（Cloudflare）
 
-音声とキューの置き場を Cloudflare に作ります。リポジトリの `worker/` にある実装を使います。
+音声とキューの置き場を Cloudflare に作ります。リポジトリの `worker/` にある実装を使います。以下の「画面で設定する方法」と「Wranglerで設定する方法」のどちらかを選んでください。両方を行う必要はありません。
+
+### 方法A: 画面で設定する
 
 あなたがやること:
 
@@ -67,6 +69,53 @@ iOS アプリ ──キューを取得──▶ 新着を再生 (再生中は音
 4. デプロイ後に表示される Worker の URL（`https://<名前>.<アカウント>.workers.dev` のような形）を控えます。これが配信基盤の住所になります。
 
 画面の操作で詰まったら、その画面の状態を Muse に見せて相談できます。
+
+### 方法B: Wranglerで設定する
+
+WranglerはCloudflareの設定・デプロイ用コマンドです。`worker/wrangler.toml` を読み、Workerの作成・更新と、R2バケットへの接続設定を行います。コードを画面に貼り付ける必要はありません。
+
+あなたがやること:
+
+1. Cloudflareの画面でR2を有効化します。バケットは下のコマンドで作るため、この段階で作成しなくても構いません。
+2. [Node.js](https://nodejs.org/)のLTS版をMacにインストールします。Node.jsに付属する `npx` を使います。
+3. 方法Aの手順2に従い、アップロード用トークンを生成してパスワード管理ツールに保管します。
+4. このリポジトリを保存したフォルダをターミナルで開き、次を実行します。
+
+   ```bash
+   cd worker
+   npx wrangler login
+   npx wrangler whoami
+   ```
+
+   初回にWranglerのインストール確認が出たら内容を確認して進めます。ブラウザでCloudflareへのログインを許可し、`whoami` に表示されるアカウントが配信基盤を作りたいアカウントであることを確認します。
+
+5. `worker/wrangler.toml` の `name`（Worker名）と `bucket_name`（R2バケット名）を確認します。既定はどちらも `vcm-queue` です。名前を変えたい場合は、ここで変更します。接続名 `binding = "QUEUE_BUCKET"` は変えません。既存Workerを更新する場合は、そのWorker名に合わせます。
+6. バケットをまだ作っていない場合だけ、次を実行します。名前を変更した場合はコマンド側も同じ名前にしてください。
+
+   ```bash
+   npx wrangler r2 bucket create vcm-queue
+   ```
+
+   **既存のバケットを使う場合は、このコマンドを省略します。** `wrangler.toml` の指定だけで、ここでのバケット作成が済んだと考えないでください。
+
+7. `worker/` フォルダのまま、Workerをデプロイし、秘密値を登録します。
+
+   ```bash
+   npx wrangler deploy
+   npx wrangler secret put UPLOAD_TOKEN
+   ```
+
+   `secret put` の入力欄に、手順3で生成したトークンを入力します。値をコマンドの引数や `wrangler.toml` に書かないでください。既存Workerの更新で、同じトークンが登録済みなら `secret put` は不要です。新規作成では秘密値の登録が終わるまでアップロードを使い始めないでください。
+
+8. デプロイ時に表示されるWorkerのURLを控えます。以後のGAS・アプリの設定に使います。
+
+以後、`worker.js` を変更したときは、同じ `worker/` フォルダで `npx wrangler deploy` を実行すれば反映できます。バケット作成や、変更していないトークンの再登録は不要です。
+
+コマンド操作が難しければ、Museに「`worker/wrangler.toml` を使った設定を手伝って」と依頼できます。Cloudflareのログイン許可と秘密値の入力は、本人が認証画面・安全な入力欄で行ってください。
+
+参考: [Wrangler設定](https://developers.cloudflare.com/workers/wrangler/configuration/)、[R2バケット作成](https://developers.cloudflare.com/r2/buckets/create-buckets/)。この手順で設定するのはCloudflare側だけです。GASとiOSアプリの設定は続くステップで行います。
+
+### どちらの方法でも最後に確認
 
 **確認:** WorkerのURLの末尾に `/queue.json` を付けてブラウザで開き、JSONが表示されること。未配信なら `{"session":"standby","messages":[]}` が表示されます。エラーの場合は、先にバケットの接続名とデプロイ設定を確認します。
 
