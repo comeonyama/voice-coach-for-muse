@@ -248,7 +248,7 @@ Codex は、`xcrun devicectl list devices` などで接続端末を確認し、�
 
 ### 4-2. コードを貼り付けて保存する
 
-1. リポジトリ内の **`muse/gas/livetrack_detector.gs`** をテキストエディタで開き、内容をすべてコピーします。GitHub で開く場合は **Raw** 表示からコード本文をコピーします。
+1. リポジトリ内の **`gas/livetrack_detector.gs`** をテキストエディタで開き、内容をすべてコピーします。GitHub で開く場合は **Raw** 表示からコード本文をコピーします。
 2. GAS の画面左側で **エディタ（<>）** を選び、`コード.gs`（または `Code.gs`）を開きます。
 3. 最初から入っている `function myFunction() { ... }` を含め、編集欄の内容をすべて削除し、コピーしたコードに置き換えます。ファイル名や Markdown の囲み記号は貼り付けません。GAS 側のファイル名は `コード.gs` のままで構いません。
 4. 上部の保存ボタン、または **⌘S**（Windows は **Ctrl+S**）で保存します。
@@ -343,7 +343,7 @@ URL だけをブラウザで開くと **`{"ok":false,"error":"unauthorized"}`** 
 
 **確認:** `debugCheck` が正常に実行でき、ウェブアプリの `/exec` URL と `KICK_SECRET` を手元に用意できたこと。続くステップ5で iPhone に登録します。実際の開始メールから監視・配信までの確認は、ステップ6以降の準備を終えてから行います。
 
-参考: [このリポジトリの GAS 詳細手順](muse/gas/README.md)、Google公式の[スクリプト プロパティ](https://developers.google.com/apps-script/guides/properties)、[権限承認](https://developers.google.com/apps-script/guides/services/authorization)、[ウェブアプリのデプロイ](https://developers.google.com/apps-script/guides/web)。画面の表記はアカウントや表示言語により異なる場合があります。
+参考: [このリポジトリの GAS 詳細手順](gas/README.md)、Google公式の[スクリプト プロパティ](https://developers.google.com/apps-script/guides/properties)、[権限承認](https://developers.google.com/apps-script/guides/services/authorization)、[ウェブアプリのデプロイ](https://developers.google.com/apps-script/guides/web)。画面の表記はアカウントや表示言語により異なる場合があります。
 
 <a id="step-5"></a>
 
@@ -361,7 +361,7 @@ URL だけをブラウザで開くと **`{"ok":false,"error":"unauthorized"}`** 
 
 受信中も変更できます。選択は約30秒ごとのGASへのキックに載り、次の監視サイクルで読み取られます。通信・音声生成の時間もあるため、変更直後や指定時刻ぴったりの発話は保証しません。変更後は、前回の送信地点・時刻を基準に判定し、過ぎた区間の分をまとめて連続送信することはありません。距離モードは初回を約300mで送り、その後は前回の送信地点から500mまたは1km進むごとです。開始・終了の案内はこの間隔とは別です。
 
-**既存環境でこの機能を使うには、アプリだけでなくWorker・GAS・Muse側も更新が必要です。** ランの合間に、Workerをステップ2の手順でデプロイし、Museに監視プログラム一式（watcherを含む）の更新を依頼してください。GASは `muse/gas/livetrack_detector.gs` を貼り替えて保存し、**デプロイ → デプロイを管理 → 使用中のデプロイ → 編集 → 新しいバージョン → デプロイ** と進めます。同じ `/exec` URLを維持し、新しいデプロイを作り直さないでください。その後にアプリを更新します。Worker・GASの本番デプロイは本人が行います。
+**既存環境でこの機能を使うには、アプリだけでなくWorker・GAS・Muse側も更新が必要です。** ランの合間に、Workerをステップ2の手順でデプロイし、Museに監視プログラム一式（watcherを含む）の更新を依頼してください。GASは `gas/livetrack_detector.gs` を貼り替えて保存し、**デプロイ → デプロイを管理 → 使用中のデプロイ → 編集 → 新しいバージョン → デプロイ** と進めます。同じ `/exec` URLを維持し、新しいデプロイを作り直さないでください。その後にアプリを更新します。Worker・GASの本番デプロイは本人が行います。
 
 更新後は受信中に選択を変え、Museに同じ開始ID・同じキューのまま `speech_interval` が監視側へ届くことと、次回の送信判定を確認してもらいます。旧アプリのように指定がない場合は、サーバーの設定（運用標準は `interval` / 180秒）が使われます。
 
@@ -527,6 +527,6 @@ Museから受け取る完了報告:
 ## 詳しく知りたい人向け
 
 - [muse/README.md](muse/README.md): 監視プログラム一式の構成と設定項目
-- [muse/gas/README.md](muse/gas/README.md): 開始検知スクリプトの詳細
+- [gas/README.md](gas/README.md): 開始検知スクリプトの詳細
 - [muse/HOOKS.md](muse/HOOKS.md): 監視を常駐ではなく単発実行にしている理由と仕組み
 - [worker/worker.js](worker/worker.js): 配信基盤の実装

@@ -91,7 +91,8 @@ Museが更新する `queue.json` とMP3をHTTP(S)で配信し、アプリにURL�
 |---|---|
 | `livetrack-receiver-ios/` | iOS アプリ |
 | `worker/` | 配信基盤（Cloudflare Worker + R2）の実装 |
-| `muse/` | 監視プログラム一式、開始検知（GAS）、運用手順書。監視側の正本 |
+| `gas/` | 開始メール検知（Google Apps Script）の実装と設置手順 |
+| `muse/` | 監視プログラム一式、発話エージェント用プロンプト、運用資料 |
 | `docs/` | システム構成・データフローと障害記録 |
 
 旧XServer構成の `monitor/` と `publisher/` は削除済みです。過去版はGit履歴から参照できます。

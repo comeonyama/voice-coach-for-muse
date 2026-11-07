@@ -21,7 +21,7 @@ Voice Coach for Muse の「頭脳」側一式。Garmin LiveTrack を監視し、
 | `wait_announce.py` | 検知までの待機音声 (run_watch から起動される) |
 | `finalize_run.py` | 監視が途中で死んだ場合の復旧。最終ポイントから終了処理を完遂する |
 | `../worker/` | 配信基盤 (Cloudflare Worker + R2)。キュー・音声・履歴・セッションの置き場（リポジトリルートに配置） |
-| `gas/` | 開始メール検知 (Google Apps Script)。アプリのキックで Gmail を検索し Worker へ渡す |
+| [../gas/](../gas/README.md) | 開始メール検知 (Google Apps Script)。アプリのキックで Gmail を検索し Worker へ渡す |
 | [prompts/insert-agent.md](prompts/insert-agent.md) | 定型コーチングと併走する発話エージェントへ渡すプロンプト |
 | `config.sample.json` | 監視設定の雛形 |
 | `comment_stock.sample.json` | コメント素材の雛形 (実運用では自分の言葉に差し替える) |

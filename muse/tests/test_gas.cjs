@@ -1,1 +1,1 @@
-require("../gas/test_processed.cjs");
+require("../../gas/test_processed.cjs");

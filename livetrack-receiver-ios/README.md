@@ -183,7 +183,7 @@ GASのfoundは検知だけを意味する。監視中表示は公開start-status
 配置はWorker・VMを準備後、新アプリを先に配布し、GASの既存デプロイを
 「新しいバージョン」で更新する（/exec URL維持、新規デプロイ不要）。
 GAS更新後はstart_id/sinceのない旧アプリでは検知できない。
-詳細は [GAS手順](../muse/gas/README.md) を参照。
+詳細は [GAS手順](../gas/README.md) を参照。
 
 ## 1.4.6 (17) の音声テストと待機処理
 
