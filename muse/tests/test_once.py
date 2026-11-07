@@ -23,6 +23,7 @@ class OnceTests(unittest.TestCase):
     def test_repeated_cycle_no_double_send(self):
         with tempfile.TemporaryDirectory() as directory:
             cfg,session=self.fixture(directory)
+            cfg["send_mode"] = "per_km"
             result={'ok':True,'session':{},'status':{'distance_km':0.3,'duration_secs':100,'last_point_age_secs':1}}
             with patch.object(Monitor,'poll',return_value=result), patch.object(Monitor,'publish',return_value=True) as publish, patch('coach_monitor.time.sleep') as sleep:
                 Monitor(cfg,session,[],{}).run_once()
@@ -70,6 +71,7 @@ class OnceTests(unittest.TestCase):
     def test_replay_after_ack_before_cycle_commit(self):
         with tempfile.TemporaryDirectory() as directory:
             cfg,session=self.fixture(directory)
+            cfg["send_mode"] = "per_km"
             response={'ok':True,'session':{},'status':{'distance_km':0.3,'duration_secs':100,'last_point_age_secs':1}}
             import subprocess
             child=subprocess.CompletedProcess([],0,json.dumps(response),'')

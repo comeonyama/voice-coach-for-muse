@@ -93,6 +93,63 @@ class CadenceTests(unittest.TestCase):
             write_json(Path(directory)/'session.json', dict(session,queue_session='other',speech_interval='per_km'))
             self.assertEqual(monitor.cadence(),('interval',180))
 
+    def test_interval_first_cycle_and_persisted_boundaries(self):
+        with tempfile.TemporaryDirectory() as directory:
+            cfg, session = self.fixture(directory)
+            response = dict(ok=True, session={}, status=dict(distance_km=.3, duration_secs=100))
+            with patch.object(Monitor, 'poll', return_value=response), patch.object(Monitor, 'say', return_value=True) as say:
+                for now, count in [(1000, 1), (1179, 1), (1180, 2), (1359, 2), (1360, 3)]:
+                    with self.subTest(now=now), patch('coach_monitor.time.time', return_value=now):
+                        Monitor(cfg, session, [], {}).run_once()
+                        self.assertEqual(say.call_count, count)
+                state = json.loads((Path(directory)/'coach_state.json').read_text())
+                self.assertEqual(state['sent'], 2)
+                self.assertEqual(state['last_send'], 1360)
+
+    def test_interval_waits_for_live_data_after_deadline(self):
+        for empty in ({}, dict(distance_km=0, duration_secs=0, current_hr=None),
+                      dict(distance_km=0, duration_secs=0, current_hr=0)):
+            for live in (dict(distance_km=.1), dict(duration_secs=200), dict(current_hr=100)):
+                with self.subTest(empty=empty, live=live), tempfile.TemporaryDirectory() as directory:
+                    cfg, session = self.fixture(directory)
+                    response = dict(ok=True, session={}, status=empty)
+                    with patch.object(Monitor, 'poll', return_value=response), patch.object(Monitor, 'say', return_value=True) as say:
+                        for now in (1000, 1180, 1300):
+                            with patch('coach_monitor.time.time', return_value=now):
+                                Monitor(cfg, session, [], {}).run_once()
+                        self.assertEqual(say.call_count, 1)  # start announcement only
+                        response['status'] = live
+                        with patch('coach_monitor.time.time', return_value=1320):
+                            Monitor(cfg, session, [], {}).run_once()
+                        self.assertEqual(say.call_count, 2)
+
+    def test_interval_legacy_zero_anchor_uses_saved_start(self):
+        with tempfile.TemporaryDirectory() as directory:
+            cfg, session = self.fixture(directory)
+            write_json(Path(directory)/'coach_state.json', dict(queue_session='run-test',
+                       last_send=0, started_at=1000, start_announced=True))
+            response = dict(ok=True, session={}, status=dict(distance_km=.3, duration_secs=100))
+            with patch.object(Monitor, 'poll', return_value=response), patch.object(Monitor, 'say', return_value=True) as say:
+                for now, count in [(1100, 0), (1180, 1)]:
+                    with patch('coach_monitor.time.time', return_value=now):
+                        Monitor(cfg, session, [], {}).run_once()
+                    self.assertEqual(say.call_count, count)
+
+    def test_interval_continuous_run_waits_first_interval(self):
+        with tempfile.TemporaryDirectory() as directory:
+            cfg, session = self.fixture(directory, max_messages=1, poll_interval_sec=180)
+            response = dict(ok=True, session={}, status=dict(distance_km=.3, duration_secs=100))
+            with patch('coach_monitor.time.time', return_value=1000) as clock, patch.object(Monitor, 'poll', return_value=response), patch.object(Monitor, 'say', return_value=True) as say:
+                def sleep(seconds):
+                    # Advance the fake clock; only the announcement may have
+                    # been sent before the first full interval has passed.
+                    if clock.return_value == 1000:
+                        self.assertEqual(say.call_count, 1)
+                    clock.return_value += seconds
+                with patch('coach_monitor.time.sleep', side_effect=sleep):
+                    Monitor(cfg, session, [], {}).run()
+                self.assertEqual(say.call_count, 2)
+
     def test_validation(self):
         with tempfile.TemporaryDirectory() as directory:
             cfg,_=self.fixture(directory)

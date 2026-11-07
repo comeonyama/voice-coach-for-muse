@@ -204,6 +204,10 @@ class Monitor:
             write_json(self.state_dir / "session.json", self.session)
         self.restore_cycle()
         self.cycle_started_at = getattr(self, "cycle_started_at", time.time())
+        # Persist the initial interval anchor before any publish, including
+        # inflight checkpoints, so --once restarts cannot reset the countdown.
+        if self.last_send <= 0:
+            self.last_send = self.cycle_started_at
         self.cycle_base = json.loads(json.dumps(self.cycle_state()))
         self.inflight = getattr(self, "inflight", {})
         self.delivery_index = 0
@@ -489,6 +493,8 @@ class Monitor:
         if progress:
             return 0 if finish_run(cfg, self.session, progress["text"], progress["reason"], self.log, once=getattr(self, "once", False)) else 2
         start_wall = getattr(self, "cycle_started_at", time.time())
+        if self.last_send <= 0:
+            self.last_send = start_wall
         max_dur = cfg.get("max_duration_min", 360) * 60
         max_msg = cfg.get("max_messages", 200)
         poll_interval = cfg.get("poll_interval_sec", 20)
@@ -562,7 +568,10 @@ class Monitor:
                     if announce:
                         self.say(announce)
 
-                if self.send_due(dist, now):
+                # The start announcement is allowed without telemetry, but
+                # ordinary coaching must wait for at least one live value.
+                has_live_data = dist > 0 or dur > 0 or (hr is not None and hr > 0)
+                if has_live_data and self.send_due(dist, now):
                     comment, is_advice = self.pick_comment(dist, dur, session.get("start"),
                                                            recent_pace, now)
                     if self.say(self.spine(dist, avg, hr) + comment):
