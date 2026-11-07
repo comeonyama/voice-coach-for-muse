@@ -1,6 +1,7 @@
 # Voice Coach for Muse
 
-Garmin LiveTrack を Muse が監視し、走行中に音声コーチングを届ける仕組みと、その受信 iOS アプリのリポジトリです。
+Garmin LiveTrack + Muse + スマホアプリで、準リアルタイムの音声コーチングを実現するためのフレームワークです。
+現在 iOS のみ対応しています。
 
 ## システム構成図
 
