@@ -2,7 +2,31 @@
 
 Garmin LiveTrack を Muse が監視し、走行中に音声コーチングを届ける仕組みと、その受信 iOS アプリのリポジトリです。
 
-セットアップは [SETUP.md](SETUP.md) を参照してください。
+## システム構成図
+
+**開始を見つける → 走行を見守る → 音声を届ける**という流れです。
+
+```mermaid
+flowchart TB
+  Garmin["Garmin / LiveTrack"] -->|開始通知メール| Gmail["Gmail"]
+  Phone["iPhone アプリ"] -->|開始メールの確認を依頼| GAS["GAS：開始検知"]
+  GAS -->|メールを検索| Gmail
+  GAS -->|開始情報を登録| Cloud["Cloudflare Worker + R2<br/>開始情報・キュー・音声・履歴"]
+  subgraph MuseEnv["Muse の実行環境"]
+    Hook["20秒間隔の外部フック"] --> Coach["監視プログラム<br/>走行確認・文面作成・音声化"]
+  end
+  Coach -->|開始情報を取得| Cloud
+  Coach -->|走行データを取得| Garmin
+  Coach -->|コーチング音声などを保存| Cloud
+  Phone -->|定期的にキュー・音声などを取得| Cloud
+  Phone -->|MP3再生・音声なしなら端末で読み上げ| Earphones["イヤホン"]
+```
+
+通常の操作は **アプリで開始 → 時計で開始**。GAS は Google Apps Script の略で、開始メールを探す役です。Muse の実行環境では監視プログラムを単発で起動し、コーチングを配信します。iPhone は配信基盤へ定期的に問い合わせて受信し、再生中は音楽の音量を一時的に下げます。
+
+図の「検索」「取得」の矢印は、問い合わせる側から接続先へ向けています。20秒は監視の起動要求間隔で、音声を毎回20秒ごとに配信する意味ではありません。
+
+詳しい処理とデータの保存先は [システム構成図・データフロー詳細](docs/system-and-data-flow.md)、導入手順は [SETUP.md](SETUP.md) を参照してください。
 
 ## プロジェクト
 
