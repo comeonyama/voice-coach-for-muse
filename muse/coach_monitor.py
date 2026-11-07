@@ -39,7 +39,8 @@ Comment selection order per message:
   3. progress note (every Nth message, if enabled)
   4. motivational line (every Nth message, if enabled)
   5. neta pool (in order), then tips pool (in order)
-  6. generated progress fallback
+  6. climb note for the latest completed km
+  7. generated progress fallback
 Every delivered comment is appended to used_comments.json in the state
 directory and is never repeated (important advice is exempt).
 
@@ -132,9 +133,13 @@ class Monitor:
         # monitor still closes with real figures.
         self.last_dist = 0.0
         self.last_dur = 0
+        self.total_ascent_m = 0.0
+        self.last_elevation_split = None
         try:
             ps = read_state(self.state_dir / "poll_state.json", {},
                             valid=lambda value: value.get("session_id") == session["session_id"])
+            self.total_ascent_m = ps.get("total_ascent_m", 0.0)
+            self.last_elevation_split = ps.get("last_elevation_split")
             lp = ps.get("last_point") or {}
             if lp.get("dist_m"):
                 self.last_dist = float(lp["dist_m"]) / 1000.0
@@ -149,7 +154,8 @@ class Monitor:
         self.start_announced = False
 
     STATE_FIELDS = ("seq", "sent", "fail_streak", "last_send", "last_send_km",
-                    "last_fast_advice", "last_dist", "last_dur", "saw_live", "start_announced")
+                    "last_fast_advice", "last_dist", "last_dur", "saw_live", "start_announced",
+                    "total_ascent_m", "last_elevation_split")
 
     def restore_cycle(self):
         state = read_state(self.state_dir / "coach_state.json", {})
@@ -358,10 +364,20 @@ class Monitor:
 
     def pick_comment(self, dist, dur, session_start_iso, recent_pace, now):
         cfg = self.cfg
+        altitude = cfg.get("altitude") or {}
+        split = self.last_elevation_split or {}
+        split_km = split.get("km", -1)
+        current_split = split_km == int(dist)
+        # Limit suppression to 150 m after the crossing: an old downhill km
+        # must not hide a later flat/uphill acceleration in interval mode.
+        downhill = (altitude.get("enabled", True) and current_split
+                    and 0 <= dist - split_km <= 0.15
+                    and split.get("elev_loss_m", 0) - split.get("elev_gain_m", 0)
+                    >= altitude.get("downhill_net_loss_m", 20))
         # 1) important advice: sustained too-fast pace (repeatable, cooldown)
         fast_limit = (cfg.get("target_pace") or {}).get("fast_limit_sec")
         cooldown = cfg.get("fast_advice_cooldown_sec", 300)
-        if fast_limit and recent_pace and recent_pace < fast_limit \
+        if not downhill and fast_limit and recent_pace and recent_pace < fast_limit \
                 and now - self.last_fast_advice > cooldown:
             self.last_fast_advice = now
             return (f"直近はキロ{pace_str(recent_pace)}と上がり気味です。"
@@ -397,7 +413,13 @@ class Monitor:
         c = self._take(self.neta) or self._take(self.tips)
         if c:
             return c, False
-        # 6) generated fallback (always fresh: numbers differ)
+        # 6) Climb note only after ordinary materials are exhausted.
+        if (altitude.get("enabled", True) and current_split
+                and split.get("elev_gain_m", 0) >= altitude.get("climb_gain_m", 20)):
+            climb = f"直近の{split_km}キロ目では、約{round(split['elev_gain_m'])}メートル登りました。"
+            if climb not in self.used:
+                return climb, False
+        # 7) generated fallback (always fresh: numbers differ)
         emin = self._elapsed_min(session_start_iso) or 0
         return f"スタートから{emin}分が過ぎました。残りもこの調子でどうぞ。", False
 
@@ -428,6 +450,10 @@ class Monitor:
             closing = cfg.get("closing_text",
                                "{distance}キロ。平均ペースはキロ{pace}でした。おつかれさまでした。")
             text = closing.replace("{distance}", dist_spoken(dist)).replace("{pace}", pace_str(avg))
+            altitude = cfg.get("altitude") or {}
+            if (altitude.get("enabled", True)
+                    and self.total_ascent_m >= altitude.get("finish_ascent_m", 50)):
+                text += f"獲得標高は約{round(self.total_ascent_m)}メートルでした。"
         return 0 if finish_run(cfg, self.session, text, reason, self.log, once=getattr(self, "once", False)) else 2
 
     def run(self):
@@ -454,6 +480,13 @@ class Monitor:
                     return 0
                 res = self.poll()
                 session = res.get("session") or {}
+                status = res.get("status") or {}
+                if status.get("total_ascent_m") is not None:
+                    self.total_ascent_m = status["total_ascent_m"]
+                splits = res.get("new_splits") or []
+                latest = res.get("last_elevation_split") or (splits[-1] if splits else None)
+                if latest is not None:
+                    self.last_elevation_split = latest
                 if not res.get("ok"):
                     # An ended session surfaces as a failed poll whose
                     # payload says ended: that is a finish, not a failure.

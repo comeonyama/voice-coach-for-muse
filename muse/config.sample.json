@@ -59,5 +59,11 @@
   "max_messages": 200,
   "send_interval_sec": 60,
   "progress_every": 0,
-  "motivational_every": 0
+  "motivational_every": 0,
+  "altitude": {
+    "enabled": true,
+    "downhill_net_loss_m": 20,
+    "climb_gain_m": 20,
+    "finish_ascent_m": 50
+  }
 }

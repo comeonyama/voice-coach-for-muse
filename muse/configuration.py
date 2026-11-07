@@ -63,7 +63,7 @@ def validate_config(cfg):
         fail("milestones_km", "array")
     for mark in marks:
         number("milestones_km", mark, 0.001)
-    for key in ("target_pace", "hydration", "close"):
+    for key in ("target_pace", "hydration", "close", "altitude"):
         if cfg.get(key) is not None and not isinstance(cfg[key], dict):
             fail(key, "object")
     target = cfg.get("target_pace") or {}
@@ -75,6 +75,12 @@ def validate_config(cfg):
     for key, minimum in (("every_min", 0.001), ("min_run_min", 0)):
         if key in hydration:
             number("hydration." + key, hydration[key], minimum)
+    altitude = cfg.get("altitude") or {}
+    if "enabled" in altitude and not isinstance(altitude["enabled"], bool):
+        fail("altitude.enabled", "boolean")
+    for key in ("downhill_net_loss_m", "climb_gain_m", "finish_ascent_m"):
+        if key in altitude:
+            number("altitude." + key, altitude[key], 0.001)
     close = cfg.get("close") or {}
     if "wait_before_standby_sec" in close:
         number("close.wait_before_standby_sec", close["wait_before_standby_sec"])

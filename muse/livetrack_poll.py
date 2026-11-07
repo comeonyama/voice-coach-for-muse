@@ -28,8 +28,10 @@ Output JSON fields:
   error: str (when ok is false)
   session: {start, end, ended}
   status: {distance_km, duration_secs, last_point_age_secs,
-           current_hr, current_pace_secs_per_km, current_pace, points_total}
-  new_splits: [{km, split_secs, pace, avg_hr}]
+           current_hr, current_pace_secs_per_km, current_pace, points_total,
+           current_altitude_m, total_ascent_m}
+  new_splits: [{km, split_secs, pace, avg_hr, elev_gain_m, elev_loss_m}]
+  last_elevation_split: latest completed split (also on polls with no crossing)
 
 Notes on the (unofficial) API behaviour, verified 2026-10-29 / 2026-11-01:
   - The API needs the viewer page's cookies plus a `Livetrack-Csrf-Token`
@@ -43,6 +45,7 @@ Notes on the (unofficial) API behaviour, verified 2026-10-29 / 2026-11-01:
 import argparse
 import http.cookiejar
 import json
+import math
 import os
 import re
 import sys
@@ -51,6 +54,18 @@ import urllib.request
 import urllib.error
 from datetime import datetime, timezone
 from runtime import private_dir, error_info, read_state
+
+# Metres from the last accepted altitude, not the previous raw sample.
+# This rejects small oscillations while retaining gradual climbs.
+ALTITUDE_DEADBAND_M = 2.0
+
+
+def altitude_value(value):
+    try:
+        return float(value) if not isinstance(value, bool) and math.isfinite(float(value)) else None
+    except (TypeError, ValueError):
+        return None
+
 
 BASE = "https://livetrack.garmin.com"
 UA = {"User-Agent": "Mozilla/5.0 (Voice Coach for Muse livetrack poller)", "Accept": "application/json"}
@@ -144,6 +159,12 @@ def main():
         "km_hr_sum": 0.0,
         "km_hr_n": 0,
         "km_start_dur": 0.0,      # duration at last km crossing
+        "last_altitude_m": None,
+        "altitude_anchor_m": None,
+        "km_elev_gain_m": 0.0,
+        "km_elev_loss_m": 0.0,
+        "total_ascent_m": 0.0,
+        "last_elevation_split": None,
         "points_total": 0,
         "last_point_ts": None,
     }
@@ -214,6 +235,8 @@ def main():
         dist = getf(pt, "totalDistanceMeters")
         dur = getf(pt, "totalDurationSecs")
         hr = getf(pt, "heartRateBeatsPerMin")
+        altitude = altitude_value(getf(pt, "altitude"))
+        state["last_altitude_m"] = altitude
         state["points_total"] += 1
         if ts_raw:
             state["last_point_ts"] = ts_raw
@@ -221,10 +244,26 @@ def main():
             if nxt:
                 state["next_begin"] = datetime.fromtimestamp(nxt.timestamp() + 0.001, timezone.utc).isoformat().replace("+00:00", "Z")
         if dist is None or dur is None:
+            # Do not bridge a gap whose distance cannot be assigned to a km.
+            state["altitude_anchor_m"] = None
             continue
         dist = float(dist)
         dur = float(dur)
         prev = state["last_point"]
+        anchor = state["altitude_anchor_m"]
+        delta = 0.0
+        if altitude is None:
+            state["altitude_anchor_m"] = None
+        elif anchor is None or not prev or dist < prev["dist_m"]:
+            state["altitude_anchor_m"] = altitude
+        elif abs(altitude - anchor) >= ALTITUDE_DEADBAND_M:
+            delta = altitude - anchor
+            state["altitude_anchor_m"] = altitude
+        gain, loss = max(delta, 0.0), max(-delta, 0.0)
+        state["total_ascent_m"] += gain
+        # Spread an accepted delta across any km boundaries in this segment.
+        # Sub-deadband motion is charged to the segment where it is accepted.
+        allocated = 0.0
         if hr:
             state["km_hr_sum"] += float(hr)
             state["km_hr_n"] += 1
@@ -236,6 +275,11 @@ def main():
                 cross_dur = prev["dur_s"] + frac * (dur - prev["dur_s"])
             else:
                 cross_dur = dur
+            fraction = max(0.0, min(1.0, frac)) if prev and dist > prev["dist_m"] else 1.0
+            portion = max(0.0, fraction - allocated)
+            state["km_elev_gain_m"] += gain * portion
+            state["km_elev_loss_m"] += loss * portion
+            allocated = fraction
             split = cross_dur - state["km_start_dur"]
             avg_hr = (state["km_hr_sum"] / state["km_hr_n"]) if state["km_hr_n"] else None
             state["km_done"] += 1
@@ -244,14 +288,23 @@ def main():
                 "split_secs": round(split, 1),
                 "pace": fmt_pace(split),
                 "avg_hr": round(avg_hr) if avg_hr else None,
+                "elev_gain_m": round(state["km_elev_gain_m"], 1),
+                "elev_loss_m": round(state["km_elev_loss_m"], 1),
             })
+            state["last_elevation_split"] = new_splits[-1]
+            state["km_elev_gain_m"] = 0.0
+            state["km_elev_loss_m"] = 0.0
             state["km_start_dur"] = cross_dur
             state["km_hr_sum"] = 0.0
             state["km_hr_n"] = 0
+        state["km_elev_gain_m"] += gain * (1.0 - allocated)
+        state["km_elev_loss_m"] += loss * (1.0 - allocated)
         state["last_point"] = {"dist_m": dist, "dur_s": dur, "ts": ts_raw}
 
     # --- current status from the last usable point ---
-    status = {"points_total": state["points_total"]}
+    status = {"points_total": state["points_total"],
+              "current_altitude_m": state["last_altitude_m"],
+              "total_ascent_m": round(state["total_ascent_m"], 1)}
     lp = state["last_point"]
     if lp:
         status["distance_km"] = round(lp["dist_m"] / 1000.0, 3)
@@ -282,7 +335,8 @@ def main():
         json.dump(state, fh, ensure_ascii=False)
     os.replace(tmp, args.state)
 
-    out.update({"ok": True, "session": session_info, "status": status, "new_splits": new_splits})
+    out.update({"ok": True, "session": session_info, "status": status, "new_splits": new_splits,
+                "last_elevation_split": state["last_elevation_split"]})
     print(json.dumps(out, ensure_ascii=False))
 
 
