@@ -39,10 +39,10 @@ iOS アプリ ──約5秒間隔で queue.json を取得──▶ 新着を再�
 
 ## ステップ 2: 配信基盤（Cloudflare Worker + R2）
 
-参照実装は [muse/worker/](muse/worker/) です。要点は次のとおりです。
+参照実装は [worker/](worker/) です。要点は次のとおりです。
 
 1. Cloudflare で R2 を有効化し、バケット（例: `vcm-queue`）を作成します。
-2. `muse/worker/wrangler.toml` のバケット名を自分のものに合わせ、`UPLOAD_TOKEN` を secret に登録して、`worker.js` をデプロイします（`npx wrangler secret put UPLOAD_TOKEN` → `npx wrangler deploy`。ダッシュボードへの貼り付けデプロイでも構いません）。
+2. `worker/wrangler.toml` のバケット名を自分のものに合わせ、`UPLOAD_TOKEN` を secret に登録して、`worker.js` をデプロイします（`npx wrangler secret put UPLOAD_TOKEN` → `npx wrangler deploy`。ダッシュボードへの貼り付けデプロイでも構いません）。
 3. ルートの役割:
    - 公開 GET: `/queue.json`（配信キュー）、`/history.json`（過去ランの履歴）、`/audio/<name>`（音声）、`/start-status.json`（開始状態。LiveTrack の資格情報は含みません）
    - `/session.json`（LiveTrack のセッション情報）: アップロード用トークンのヘッダ付きでのみ取得可。資格情報を含むため公開しません

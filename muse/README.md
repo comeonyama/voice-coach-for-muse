@@ -18,7 +18,7 @@ Muse (エージェント) へ渡す運用手順書を含む。
 | `run_watch.py` | 手動開始用。待機音声を流しながら開始メールを検知し、監視へ渡す |
 | `wait_announce.py` | 検知までの待機音声 (run_watch から起動される) |
 | `finalize_run.py` | 監視が途中で死んだ場合の復旧。最終ポイントから終了処理を完遂する |
-| `worker/` | 配信基盤 (Cloudflare Worker + R2)。キュー・音声・履歴・セッションの置き場 |
+| `../worker/` | 配信基盤 (Cloudflare Worker + R2)。キュー・音声・履歴・セッションの置き場（リポジトリルートに配置） |
 | `gas/` | 開始メール検知 (Google Apps Script)。アプリのキックで Gmail を検索し Worker へ渡す |
 | `prompts/runbook.md` | Muse へ渡す運用手順書 (文面の型、起動・終了・復旧の段取り) |
 | `config.sample.json` | 監視設定の雛形 |
@@ -26,7 +26,7 @@ Muse (エージェント) へ渡す運用手順書を含む。
 
 ## セットアップの順序
 
-1. `worker/` を Cloudflare にデプロイする (R2 バケット作成、
+1. リポジトリルートの `worker/` を Cloudflare にデプロイする (R2 バケット作成、
    `wrangler secret put UPLOAD_TOKEN`、`wrangler deploy`)。
 2. アップロードトークンを Muse のシークレット管理に登録し、
    カスタムコネクタ経由で publish.py / session_watcher.py から使える
