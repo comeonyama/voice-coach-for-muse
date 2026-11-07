@@ -20,12 +20,10 @@ iOS アプリ ──約5秒間隔で queue.json を取得──▶ 新着を再�
 ## ステップ 0: 必要なもの
 
 - LiveTrack 対応の Garmin 時計と Garmin Connect アカウント
+- Muse アカウント（`muse/` パッケージの実行、音声合成（TTS）、20秒間隔の単発実行は、Muse の環境と仕組みを使います）
 - iPhone（受信アプリ用。無料の Personal Team 署名で実機インストールする場合は Mac + Xcode）
 - Google アカウント（開始通知メールを受信する Gmail と、検知用 Apps Script の実行に使う）
 - Cloudflare アカウント（配信基盤の Worker + R2 用）
-- `muse/` パッケージを実行できる環境: Python 3 と、20秒間隔でスクリプトを単発実行できる仕組み（Muse のフック、cron、systemd タイマー等）。ローカル状態の保持ができること
-- 複数文の音声を結合する ffmpeg（libmp3lame 対応）
-- TTS（テキスト読み上げ）の手段。`muse/publish.py` の `tts_speak()` を自分の TTS に適合させるか、互換 CLI を環境変数で指定します。音声合成そのものは各自が用意します
 
 作業はリポジトリのルートを起点にします。サーバーへのアップロード用トークンと LiveTrack の閲覧用トークンは別物です。トークン類はコードや設定ファイルに直書きせず、Worker の secret、GAS のスクリプトプロパティ、実行環境のシークレット管理に置いてください。実値・状態ファイル・生成音声を Git に追加しないでください。
 
