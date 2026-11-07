@@ -11,7 +11,7 @@
 - `say` 用の TTS コマンド。既定は Muse の `tts` CLI
 - 複数文の `say` には `ffmpeg`（libmp3lame 対応）
 
-TTS は次の CLI と互換である必要があります。一般の TTS サービスを使う場合は同じ引数を受け取るラッパーを用意するか、`tts_speak()` を環境に合わせます。TTS 自体と定期実行・文章生成の仕組みは外部で用意します。LiveTrack ポーラーは [monitor/](../monitor/README.md) に収録しています。
+TTS は次の CLI と互換である必要があります。一般の TTS サービスを使う場合は同じ引数を受け取るラッパーを用意するか、`tts_speak()` を環境に合わせます。TTS 自体と定期実行・文章生成の仕組みは外部で用意します。LiveTrack ポーラーは [当時の monitor/](https://github.com/comeonyama/voice-coach-for-muse/blob/6be0ce1/monitor/README.md) に収録しています。
 
 ```text
 <bin> speak --text <text> --voice <voice> --language ja --output <path>

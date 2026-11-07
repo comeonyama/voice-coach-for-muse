@@ -51,7 +51,7 @@ Museが更新する `queue.json` とMP3をHTTP(S)で配信し、アプリにURL�
 | `muse/` | 監視プログラム一式、開始検知（GAS）、運用手順書。監視側の正本 |
 | `docs/` | システム構成・データフローと障害記録 |
 
-`monitor/`、`publisher/` は旧 XServer 構成の記録として残しているもので、現行の正本ではありません。
+`publisher/` は旧 XServer 構成の記録で、現行の正本ではありません。旧 `monitor/` は削除済みです。過去版はGit履歴から参照できます。
 
 ## Muse へのコーチング指示
 
