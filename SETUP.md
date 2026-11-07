@@ -105,11 +105,54 @@ WranglerはCloudflareの設定・デプロイ用コマンドです。`worker/wra
 
 ## ステップ 3: iOS アプリを入れる（あなたがやること）
 
-1. Mac で Xcode を開き、`livetrack-receiver-ios/` のプロジェクトを開きます。
-2. 自分の Apple ID（Personal Team）で署名し、iPhone にインストールします。
-3. **注意: 無料の署名は約 7 日で切れます。** 切れるとアプリが起動できなくなるため、実走の前に再インストールしてください。常用する場合は Apple Developer Program（有料）への登録を検討してください。
+このステップでは、Mac の Xcode でプログラムからアプリを作り（ビルド）、自分の iPhone に入れます。Apple Account による「署名」は、そのアプリを自分の端末で動かすための登録です。初回は無料の Personal Team で進められます。
 
-**確認:** アプリが起動し、「音声テスト」の日本語読み上げが実際に聞こえ、音楽の音量が下がって元に戻ること。このボタンはiOS TTSの確認用で、MP3配信はステップ7で別に確認します。
+### 3-1. Mac とプロジェクトを準備する
+
+1. Mac の App Store から **Xcode** をインストールして起動します。初回の利用規約や追加コンポーネントのインストール案内に従い、準備が終わるまで待ちます。
+2. Xcode のメニューバーで **Xcode → Settings → Apple Accounts**（版によっては **Accounts**）を開き、自分の Apple Account（旧称 Apple ID）でサインインします。
+3. Finder で、このリポジトリを保存したフォルダの `livetrack-receiver-ios` を開き、**`Voice Coach for Muse.xcodeproj`** をダブルクリックします。これがアプリのプロジェクトファイルです。
+
+### 3-2. 自分のアカウントで署名する
+
+1. Xcode 左側のファイル一覧で、一番上の青いプロジェクトアイコン **Voice Coach for Muse** をクリックします。一覧が見えないときは **⌘1** で表示できます。
+2. 中央の **TARGETS → Voice Coach for Muse** を選び、上部の **Signing & Capabilities** を開きます。
+3. **Automatically manage signing** にチェックを入れ、**Team** で自分の名前が付いた **Personal Team** を選びます。有料の開発者アカウントを持っている場合は、自分の開発用 Team を選べます。
+4. **Bundle Identifier**（アプリを区別する識別子）が登録できないというエラーが出た場合は、自分用の一意な値に変更します。たとえば `com.yourname.voicecoach` の `yourname` を自分固有の英数字に置き換えます。後日の更新でも同じ値を使うため、変更した値は控えてください。
+
+### 3-3. iPhone を接続してインストールする
+
+1. **iOS 17 以降の iPhone** をデータ通信できる USB ケーブルで Mac に接続し、ロックを解除します。「このコンピュータを信頼しますか？」が出たら、接続した Mac であることを確認して信頼します。
+2. Xcode 上部で、実行するアプリ（スキーム）が **Voice Coach for Muse** になっていることを確認し、その隣の実行先から **自分の iPhone の名前** を選びます。Simulator は Mac 上の仮想端末なので、ここでは実機を選びます。端末の準備や OS サポートのダウンロードが表示されたら、完了を待ちます。
+3. iPhone の **設定 → プライバシーとセキュリティ → デベロッパモード** をオンにします。画面の案内に従って再起動し、再起動後の確認も完了します。項目が見つからない場合は、先に Xcode の **Window → Devices and Simulators** で iPhone が認識され、ペアリングが完了しているか確認します。
+4. iPhone をロック解除した状態で、Xcode 左上の **▶（Run）** を押すか **⌘R** を押します。ビルドとインストールが終わると、iPhone 上でアプリが起動します。
+5. iPhone に「信頼されていないデベロッパ」などが表示された場合だけ、**設定 → 一般 → VPNとデバイス管理** で自分の開発用アカウントを選び、画面の案内に従って信頼します。その後、ホーム画面の **Voice Coach** を開きます。
+
+### 3-4. イヤホンで音声を確認する
+
+この段階では、接続先 URL の入力や「コーチング開始」は不要です。GAS の設定はステップ4、アプリへの接続先入力はステップ5で行います。
+
+1. iPhone に実走で使うイヤホンを接続し、Spotify などで音楽を流します。
+2. **Voice Coach** を開き、設定画面の **サウンドチェック → 音声テスト** を押します。
+3. 日本語の読み上げがイヤホンから聞こえ、読み上げ中は音楽の音量が下がり、終了後に元へ戻ることを耳で確認します。聞こえない場合は、iPhone の音声出力先がそのイヤホンになっているか、音量が小さすぎないか確認します。
+
+**確認:** アプリが起動し、日本語の音声テストと音楽の音量低下・復帰を実際に確認できたこと。このボタンは iOS TTS（端末による読み上げ）の確認用です。MP3 の配信・再生と、画面をロックした状態の確認はステップ7で行います。
+
+### うまく進まない場合・後日の更新
+
+| 状況 | 対応 |
+|---|---|
+| Team に自分の名前が出ない | Xcode の Settings → Apple Accounts でサインイン済みか確認します |
+| 実行先に iPhone が出ない | ケーブル、ロック解除、Mac への信頼を確認し、Window → Devices and Simulators で端末の状態を見ます |
+| iPhone の OS に対応していないと表示される | その iOS に対応した Xcode が必要です。Xcode の更新と、必要なコンポーネントの案内を確認します |
+| 署名やビルドのエラーで止まる | エラー全文と、どの手順で止まったかを Muse に伝えます。Apple Account のパスワードや確認コードは送らず、本人が認証画面に入力します |
+| 数日後にアプリが起動しなくなった | 無料署名の期限切れの可能性があります。下記の手順で再ビルド・再インストールします |
+
+**無料の Personal Team の署名は発行から7日で失効します。** 実走前にアプリを起動できるか確認してください。期限が切れたら、同じ Mac で同じプロジェクトを開き、同じ Team・Bundle Identifier のまま iPhone を接続して **⌘R** を押し、上書きインストールします。先にアプリを削除する必要はありません。削除すると、接続先の設定や再生済み記録も消えます。継続利用する場合は Apple Developer Program（有料）への登録も検討できます。
+
+署名の制限などで止まる場合の補足は [iOS アプリの手順](livetrack-receiver-ios/README.md) を参照してください。そこにある前景専用版（Foreground）は、アプリを表示している間だけ使う構成です。ロック中の受信を確認する実走用の通常版とは区別してください。
+
+参考: Apple公式の[実機でアプリを動かす手順](https://developer.apple.com/documentation/xcode/running-your-app-on-simulated-or-physical-devices)、[デベロッパモード](https://developer.apple.com/documentation/xcode/enabling-developer-mode-on-a-device)、[無料アカウントの制限](https://developer.apple.com/help/account/basics/about-your-developer-account/)。画面の表記は Xcode・iOS のバージョンにより異なります。
 
 ## ステップ 4: 開始検知を置く（Google Apps Script）
 
