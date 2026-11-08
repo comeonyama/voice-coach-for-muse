@@ -320,7 +320,7 @@ final class ReceiverModel: NSObject, ObservableObject {
             return
         }
         notice = "同梱MP3で音声を確認しています。"
-        let message = CoachingMessage(id: "test", ts: ISO8601DateFormatter().string(from: Date()), audio: "test-coaching.mp3", text: "音声を確認しています。音楽の音量が下がり、終了後に元に戻るか確認してください。")
+        let message = CoachingMessage(id: "test", ts: ISO8601DateFormatter().string(from: Date()), audio: "test-coaching.mp3", text: "こんにちは、Voice Coach for Muse です。走っている間、こんな声でペースや心拍をお知らせします。音楽の音量が下がり、終わると元に戻るか確認してください。")
         pending.append(PlaybackItem(message: message, key: nil, url: url))
         drain()
     }
