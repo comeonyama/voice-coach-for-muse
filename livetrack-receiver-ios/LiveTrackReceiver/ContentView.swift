@@ -284,23 +284,8 @@ private struct DetectionField: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            HStack {
-                Text(title).font(.subheadline)
-                    .onTapGesture { focused = true }
-                Spacer()
-                Button {
-                    UIPasteboard.general.string = text
-                } label: {
-                    Image(systemName: "doc.on.doc").frame(width: 44, height: 44)
-                }
-                .buttonStyle(.borderless).disabled(text.isEmpty)
-                .accessibilityLabel("\(title)をコピー")
-                PasteButton(payloadType: String.self) { values in
-                    if let value = values.first { text = value }
-                }
-                .labelStyle(.iconOnly)
-                .accessibilityLabel("\(title)にペースト")
-            }
+            Text(title).font(.subheadline)
+                .onTapGesture { focused = true }
             Group {
                 if secure { SecureField(prompt, text: $text) }
                 else { TextField(prompt, text: $text) }
