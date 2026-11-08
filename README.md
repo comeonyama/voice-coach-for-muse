@@ -10,6 +10,25 @@ Voice Coach for Muse（VCM）は、Garmin LiveTrack と Muse を連携させ、�
 
 導入に必要なものと手順は [SETUP.md](SETUP.md) を参照してください。
 
+## 利用にあたって
+
+VCM は Garmin 公式ではない、個人向けのプロジェクトです。Garmin LiveTrack の公開連携 API として提供されていない通信方式を利用しているため、Garmin 側の仕様変更などにより、予告なく動作しなくなる場合があります。動作は保証されません。
+
+商用サービスとしての提供を想定していません。商用利用を検討する場合は、Garmin を含む各サービスの利用条件を確認し、必要な許諾を得てください。コードのライセンスは、外部サービスを利用する権利を付与するものではありません。
+
+不具合の報告、改善の提案、コードやドキュメントへの貢献を歓迎します。Issue や Pull Request で共有する際は、LiveTrack のリンク、トークン、個人情報を含めないでください。
+
+## ライセンスと同梱素材
+
+ソースコードとドキュメントは [MIT License](LICENSE) の下で提供します。MIT License は商用利用を含む利用・改変・再配布を認めますが、上記の外部サービスの利用条件は別途適用されます。
+
+次の同梱素材は MIT License の対象外です。公開・再配布の条件は未確認であり、このライセンスによって利用・再配布の許諾を与えるものではありません。
+
+- `livetrack-receiver-ios/LiveTrackReceiver/Resources/test-coaching.mp3`（音声テスト用音声）
+- `livetrack-receiver-ios/LiveTrackReceiver/Resources/test-tone.mp3`（テスト用音声）
+- `livetrack-receiver-ios/LiveTrackReceiver/Assets.xcassets/AppIcon.appiconset/AppIcon.png`（アプリアイコン）
+
+
 ## コンセプト：定型コーチングと発話エージェントの2層
 
 VCM は、次の2層を併走させて使います。
@@ -180,4 +199,4 @@ Museが更新する `queue.json` とMP3を認証付きHTTPSで配信し、アプ
 | TTS の声 | 例: Aria |
 
 
-公開にあたってはライセンスと同梱素材の利用条件の確認が必要です。トークン・API キー、実運用 queue、セッション状態、生成音声、テストログ、Muse 固有のコネクタ設定はコミットしないでください。`.gitignore` はすべての配置場所を網羅していないため、公開前には現在のファイルと Git 履歴の両方を確認してください。既存アプリに同梱されている音声テスト・デモ用 MP3 は動作を維持するため、そのまま残しています。
+トークン・API キー、実運用 queue、セッション状態、生成音声、テストログ、Muse 固有のコネクタ設定はコミットしないでください。`.gitignore` はすべての配置場所を網羅していないため、公開前には現在のファイルと Git 履歴の両方を確認してください。
