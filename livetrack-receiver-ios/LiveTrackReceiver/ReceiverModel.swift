@@ -12,7 +12,7 @@ final class ReceiverModel: NSObject, ObservableObject {
     }
     @Published var queueURL: String { didSet { cachedRuns = nil; defaults.set(queueURL, forKey: "queueURL") } }
     var detectionURL: String { didSet { defaults.set(detectionURL, forKey: "detectionURL") } }
-    var detectionKey: String { didSet { defaults.set(detectionKey, forKey: "detectionKey") } }
+    var detectionKey: String { didSet { saveDetectionKey() } }
     var detectionEnabled: Bool { LiveTrackKick.endpoint(detectionURL, key: detectionKey) != nil }
     private var kickTask: Task<Void, Never>?
     private var startRequest: StartRequest? {
@@ -124,7 +124,7 @@ final class ReceiverModel: NSObject, ObservableObject {
         queueURL = defaults.string(forKey: "queueURL") ?? Self.workerURL
         readToken = Self.loadReadToken()
         detectionURL = defaults.string(forKey: "detectionURL") ?? ""
-        detectionKey = defaults.string(forKey: "detectionKey") ?? ""
+        detectionKey = Self.loadDetectionKey(defaults: defaults)
         speechInterval = defaults.string(forKey: "speechInterval").flatMap(SpeechInterval.init(rawValue:)) ?? .threeMinutes
         timeoutMinutes = min(1440, max(1, defaults.object(forKey: "timeoutMinutes") as? Int ?? 30))
         let storedInterval = defaults.double(forKey: "interval")
@@ -330,6 +330,58 @@ final class ReceiverModel: NSObject, ObservableObject {
         ledger.resetAll(); defaults.removeObject(forKey: "played.v1"); history.removeAll()
         notice = "すべてのランの再生済み記録を消去しました。"
         log("再生済みリセット")
+    }
+
+    private static let detectionKeyService = "jp.voicecoach.gas.detection-key"
+
+    private static func detectionKeyQuery() -> [String: Any] {
+        [kSecClass as String: kSecClassGenericPassword,
+         kSecAttrService as String: detectionKeyService,
+         kSecAttrAccount as String: "gas"]
+    }
+
+    // Preserve the old value until the Keychain write has succeeded.
+    private static func loadDetectionKey(defaults: UserDefaults) -> String {
+        var query = detectionKeyQuery()
+        query[kSecReturnData as String] = true
+        query[kSecMatchLimit as String] = kSecMatchLimitOne
+        var result: CFTypeRef?
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        if status == errSecSuccess, let data = result as? Data,
+           let value = String(data: data, encoding: .utf8) {
+            defaults.removeObject(forKey: "detectionKey")
+            return value
+        }
+        guard let old = defaults.string(forKey: "detectionKey"), !old.isEmpty else { return "" }
+        if status == errSecItemNotFound && storeDetectionKey(old) {
+            defaults.removeObject(forKey: "detectionKey")
+        }
+        return old
+    }
+
+    @discardableResult
+    private static func storeDetectionKey(_ value: String) -> Bool {
+        let query = detectionKeyQuery()
+        if value.isEmpty {
+            let status = SecItemDelete(query as CFDictionary)
+            return status == errSecSuccess || status == errSecItemNotFound
+        }
+        let data = Data(value.utf8)
+        let status = SecItemUpdate(query as CFDictionary, [kSecValueData as String: data] as CFDictionary)
+        if status == errSecSuccess { return true }
+        guard status == errSecItemNotFound else { return false }
+        var item = query
+        item[kSecValueData as String] = data
+        item[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+        return SecItemAdd(item as CFDictionary, nil) == errSecSuccess
+    }
+
+    private func saveDetectionKey() {
+        if Self.storeDetectionKey(detectionKey) {
+            defaults.removeObject(forKey: "detectionKey")
+        } else {
+            notice = "検知スクリプトキーを保存できませんでした。設定を確認してください。"
+        }
     }
 
     private static let readTokenService = "jp.voicecoach.worker.read-token"

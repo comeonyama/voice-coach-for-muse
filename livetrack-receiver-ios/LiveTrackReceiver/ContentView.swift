@@ -224,7 +224,7 @@ struct ContentView: View {
                 }
                 Section {
                     DetectionField(title: "検知スクリプト URL", prompt: "https://…/exec", keyboard: .URL, text: $draft.url)
-                    DetectionField(title: "検知スクリプト キー", prompt: "キー", keyboard: .asciiCapable, text: $draft.key)
+                    DetectionField(title: "検知スクリプト キー", prompt: "キー", keyboard: .asciiCapable, text: $draft.key, secure: true)
                 } header: {
                     Text("LiveTrack 開始検知")
                 } footer: {
@@ -279,6 +279,7 @@ private struct DetectionField: View {
     let prompt: String
     let keyboard: UIKeyboardType
     @Binding var text: String
+    var secure = false
     @FocusState private var focused: Bool
 
     var body: some View {
@@ -300,7 +301,10 @@ private struct DetectionField: View {
                 .labelStyle(.iconOnly)
                 .accessibilityLabel("\(title)にペースト")
             }
-            TextField(prompt, text: $text)
+            Group {
+                if secure { SecureField(prompt, text: $text) }
+                else { TextField(prompt, text: $text) }
+            }
                 .accessibilityLabel(title)
                 .keyboardType(keyboard)
                 .focused($focused)
