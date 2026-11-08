@@ -152,7 +152,9 @@ struct ContentView: View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 20) {
                 if model.historyRuns.isEmpty { Text("まだコーチングはありません。").foregroundStyle(.secondary) }
-                ForEach(model.historyRuns) { run in
+                Text("最新100件を表示")
+                    .font(.caption).foregroundStyle(.secondary)
+                ForEach(HistoryRun.latest(model.historyRuns)) { run in
                     runHeading(run)
                     ForEach(run.entries) { entry in historyRow(entry) }
                 }

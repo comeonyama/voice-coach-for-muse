@@ -72,6 +72,21 @@ struct HistoryRun: Identifiable {
     let date: String
     let entries: [HistoryEntry]
 
+    static func latest(_ runs: [HistoryRun], limit: Int = 100) -> [HistoryRun] {
+        guard limit > 0 else { return [] }
+        let selected = Set(runs.flatMap(\.entries).sorted {
+            let a = $0.message.timestamp ?? .distantPast
+            let b = $1.message.timestamp ?? .distantPast
+            if a != b { return a > b }
+            if $0.id.session != $1.id.session { return $0.id.session > $1.id.session }
+            return $0.id.id > $1.id.id
+        }.prefix(limit).map(\.id))
+        return runs.compactMap { run in
+            let entries = run.entries.filter { selected.contains($0.id) }
+            return entries.isEmpty ? nil : HistoryRun(id: run.id, date: run.date, entries: entries)
+        }
+    }
+
     static func merged(source: String, live: [HistoryEntry], activeSession: String?,
                        archive: HistoryArchive?) -> [HistoryRun] {
         var groups = [String: [String: HistoryEntry]]()
@@ -149,12 +164,14 @@ enum SpeechInterval: String, CaseIterable {
     case perKm = "per_km"
     case per500m = "per_500m"
     case threeMinutes = "interval:180"
+    case oneMinute = "interval:60"
 
     var label: String {
         switch self {
         case .perKm: return "1km"
         case .per500m: return "500m"
         case .threeMinutes: return "3分"
+        case .oneMinute: return "1分"
         }
     }
 }

@@ -69,6 +69,8 @@ console.log('PASS doPost accepts start_id and rejects legacy sid');
  assert.ok(state.requests[1].url.endsWith('op=session-settings'));
  assert.deepEqual(state.requests[1].body,{start_id,speech_interval:'interval:180'});
  assert.equal(state.pages,pages);assert.equal(p.PROCESSED_MAIL_IDS,processed);
+ assert.equal(kick('interval:60').ok,true);
+ assert.equal(state.requests.at(-1).body.speech_interval,'interval:60');
  state.status=500;assert.equal(kick('per_km').ok,false);
  state.status=200;assert.equal(kick('per_km').ok,true);
  const posts=state.posts;assert.equal(kick(undefined).ok,true);assert.equal(state.posts,posts);

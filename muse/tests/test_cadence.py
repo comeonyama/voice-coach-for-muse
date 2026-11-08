@@ -69,7 +69,7 @@ class CadenceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             cfg,session=self.fixture(directory)
             for value, expected in [(None,('interval',180)),('invalid',('interval',180)),
-                                    ('per_km',('distance',1)),('per_500m',('distance',.5)),('interval:180',('interval',180))]:
+                                    ('per_km',('distance',1)),('per_500m',('distance',.5)),('interval:180',('interval',180)),('interval:60',('interval',60))]:
                 with self.subTest(value=value):
                     session['speech_interval']=value
                     monitor=Monitor(cfg,session,[],{})
@@ -88,6 +88,9 @@ class CadenceTests(unittest.TestCase):
             write_json(Path(directory)/'session.json', dict(session,speech_interval='interval:180'))
             self.assertFalse(monitor.send_due(.8,279))
             self.assertTrue(monitor.send_due(.8,280))
+            write_json(Path(directory)/'session.json', dict(session,speech_interval='interval:60'))
+            self.assertFalse(monitor.send_due(.8,159))
+            self.assertTrue(monitor.send_due(.8,160))
             write_json(Path(directory)/'session.json', dict(session,speech_interval='bad'))
             self.assertEqual(monitor.cadence(),('interval',180))
             write_json(Path(directory)/'session.json', dict(session,queue_session='other',speech_interval='per_km'))
@@ -173,6 +176,10 @@ class CadenceTests(unittest.TestCase):
                 updated=json.loads((root/'session.json').read_text())
                 self.assertEqual(updated,dict(session,speech_interval='per_500m'))
                 self.assertEqual(Monitor(cfg,session,[],{}).cadence(),('distance',.5))
+                with patch.object(watcher, 'fetch_session', return_value=(200, dict(session, speech_interval='interval:60'))):
+                    w.cycle_once()
+                    self.assertEqual(json.loads((root/'session.json').read_text())['speech_interval'], 'interval:60')
+                    self.assertEqual(Monitor(cfg,session,[],{}).cadence(), ('interval', 60))
                 publish.assert_not_called()
                 write_json(root/'session.json',dict(session,state='closed'))
                 with patch.object(watcher,'post_start_status',return_value=True): w.cycle_once()

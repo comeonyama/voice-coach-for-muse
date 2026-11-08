@@ -96,7 +96,7 @@ Voice Coach for Muse の「頭脳」側一式。Garmin LiveTrack を監視し、
 
 標準設定のひな形は `send_mode: "interval"` / `send_interval_sec: 180`（3分）です。既存configの指定値は変更せずに使えます。距離モードは `send_mode: "distance"` と `send_distance_km: 0.5` または `1.0`。旧 `per_km` は距離1kmの別名として受け付けます。距離モードは初回300m以降、成功した前回送信地点から指定距離進むたびに1件送り、複数区間を飛び越えても連続送信しません。失敗した送信では地点を進めません。
 
-セッションの `speech_interval` が `per_km` / `per_500m` / `interval:180` ならconfigより優先します。指定なし・不正値はconfigへ戻ります。アプリ→GAS→Worker→watcher→ローカルsessionの順に更新し、monitorは各サイクルで同じランのローカルsessionを読み直します。現在の単発フック経路で反映するためwatcherも更新してください。旧常駐経路でのラン中同期は対象外です。
+セッションの `speech_interval` が `per_km` / `per_500m` / `interval:180` / `interval:60` ならconfigより優先します。指定なし・不正値はconfigへ戻ります。アプリ→GAS→Worker→watcher→ローカルsessionの順に更新し、monitorは各サイクルで同じランのローカルsessionを読み直します。現在の単発フック経路で反映するためwatcherも更新してください。旧常駐経路でのラン中同期は対象外です。
 
 `coach_state.json` の `last_send_distance_km` は成功した実際の送信地点です。旧stateにない場合は `last_send_km` から移行します（旧stateに保存されなかった小数部分は復元できません）。切替では前回の送信地点・時刻を保持します。ポーラーの `distance_km` は既存の小数距離を利用し、kmスプリットは高度判定用に維持します。500mのためにkmスプリットの意味を変えません。
 

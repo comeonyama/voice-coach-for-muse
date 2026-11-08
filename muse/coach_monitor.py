@@ -475,6 +475,7 @@ class Monitor:
         if override == "per_km": return "distance", 1.0
         if override == "per_500m": return "distance", 0.5
         if override == "interval:180": return "interval", 180
+        if override == "interval:60": return "interval", 60
         mode = self.cfg.get("send_mode", "per_km")
         if mode == "interval": return mode, self.cfg.get("send_interval_sec", 60)
         return "distance", 1.0 if mode == "per_km" else self.cfg.get("send_distance_km", 1.0)

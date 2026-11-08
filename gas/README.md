@@ -66,7 +66,7 @@ Muse 環境へのプログラム配置とは別に、Google Apps Script へ配�
 | `key` | 必須 | `KICK_SECRET` と一致する値 |
 | `start_id` | 必須 | アプリの今回の開始操作を識別する UUID |
 | `since` | 必須 | 開始操作の時刻。末尾が `Z` の ISO 8601 UTC |
-| `speech_interval` | 任意 | `per_km` / `per_500m` / `interval:180` |
+| `speech_interval` | 任意 | `per_km` / `per_500m` / `interval:180` / `interval:60` |
 
 開始IDには `start_id` を使います。`sid` は GAS の予約名なので使いません。
 

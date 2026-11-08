@@ -230,7 +230,7 @@ export default {
         if (!obj) return json(409, {ok:false});
         const current = JSON.parse(await obj.text());
         if (current.start_id !== value.start_id) return json(409, {ok:false});
-        if (["per_km", "per_500m", "interval:180"].includes(value.speech_interval)
+        if (["per_km", "per_500m", "interval:180", "interval:60"].includes(value.speech_interval)
             && current.speech_interval !== value.speech_interval) {
           current.speech_interval = value.speech_interval;
           const saved = await env.QUEUE_BUCKET.put("session.json", JSON.stringify(current), {
@@ -253,7 +253,7 @@ export default {
         if (typeof parsed.session_id !== "string" || typeof parsed.token !== "string") {
           return json(400, { ok: false, error: "invalid session shape" });
         }
-        if (!["per_km", "per_500m", "interval:180"].includes(parsed.speech_interval)) delete parsed.speech_interval;
+        if (!["per_km", "per_500m", "interval:180", "interval:60"].includes(parsed.speech_interval)) delete parsed.speech_interval;
         parsed.received_at = new Date().toISOString();
         await env.QUEUE_BUCKET.put("session.json", JSON.stringify(parsed), {
           httpMetadata: { contentType: "application/json" },

@@ -143,7 +143,7 @@ class Watcher:
                 "mail_id": sess.get("mail_id", ""), "state": "live",
                 "started_mail_at": sess.get("received_at", ""), "source": "session_watcher",
                 "queue_session": qsession,
-                **({"speech_interval": sess["speech_interval"]} if sess.get("speech_interval") in ("per_km", "per_500m", "interval:180") else {}),
+                **({"speech_interval": sess["speech_interval"]} if sess.get("speech_interval") in ("per_km", "per_500m", "interval:180", "interval:60") else {}),
             })
         st = load_watcher_state()
         retries = st.get("retries", 0) if resume else 0
@@ -192,7 +192,7 @@ class Watcher:
             if (not self.args.dry_run and local.get("state") == "live"
                     and local.get("start_id") == sess.get("start_id")):
                 preference = sess.get("speech_interval")
-                if preference not in ("per_km", "per_500m", "interval:180"):
+                if preference not in ("per_km", "per_500m", "interval:180", "interval:60"):
                     preference = None
                 if local.get("speech_interval") != preference:
                     if preference is None:

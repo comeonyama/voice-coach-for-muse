@@ -61,6 +61,19 @@ import Foundation
         precondition(runs[0].entries.count == 1 && runs[0].entries[0].status == "待機中")
         precondition(runs[1].entries[0].status == "再生済み")
         precondition(HistoryRun.merged(source: source.absoluteString, live: [live], activeSession: "one", archive: nil).count == 1)
+        let manyEntries = (0..<120).map { index -> HistoryEntry in
+            let id = String(format: "%03d", index)
+            let time = ISO8601DateFormatter().string(from: Date(timeIntervalSince1970: TimeInterval(index)))
+            return HistoryEntry(id: MessageKey(source: "source", session: index % 2 == 0 ? "a" : "b", id: id),
+                                message: CoachingMessage(id: id, ts: time, audio: nil, text: id), status: "再生済み")
+        }
+        let manyRuns = [HistoryRun(id: "a", date: "1970-01-01", entries: manyEntries.filter { $0.id.session == "a" }.reversed()),
+                        HistoryRun(id: "b", date: "1970-01-01", entries: manyEntries.filter { $0.id.session == "b" }.reversed())]
+        let latest = HistoryRun.latest(manyRuns)
+        let selected = Set(latest.flatMap(\.entries).map { $0.id.id })
+        precondition(selected.count == 100 && selected.contains("119") && selected.contains("020") && !selected.contains("019"))
+        precondition(HistoryRun.latest(manyRuns, limit: 0).isEmpty)
+        precondition(HistoryRun.latest(manyRuns, limit: 200).flatMap(\.entries).count == 120)
         let script = "https://example.com/macros/s/example/exec"
         precondition(LiveTrackKick.endpoint(script, key: "") == nil)
         precondition(LiveTrackKick.endpoint("", key: "test") == nil)
