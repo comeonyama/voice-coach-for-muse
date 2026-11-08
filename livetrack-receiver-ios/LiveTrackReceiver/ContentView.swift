@@ -195,9 +195,14 @@ struct ContentView: View {
                     TextField("Worker のURL または queue.json のURL", text: $model.queueURL, axis: .vertical)
                         .keyboardType(.URL).textInputAutocapitalization(.never).autocorrectionDisabled()
                         .disabled(model.settingsLocked)
+                    SecureField("読み取りキー", text: $model.readToken)
+                        .textInputAutocapitalization(.never).autocorrectionDisabled()
+                        .disabled(model.settingsLocked)
+                    Text("Worker に設定した読み取り専用キーを入力します。キーはこの端末のKeychainに保存します。")
+                        .font(.caption)
                     Text(model.settingsLocked
                          ? "接続先を変更するには、メイン画面で受信・再生を停止してください。"
-                         : "コーチングを受け取る Worker の URL を指定します。設定は自動保存されます。変更後はメイン画面で開始し、最終受信時刻を確認してください。")
+                         : "コーチングを受け取る Worker の URL を指定します。設定は自動保存されます。変更後はメイン画面で開始し、詳細ログを確認してください。")
                         .font(.caption)
                 }
                 Section {

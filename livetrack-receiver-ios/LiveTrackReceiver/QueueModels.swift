@@ -170,17 +170,22 @@ enum LiveTrackKick {
               var parts = URLComponents(string: raw.trimmingCharacters(in: .whitespacesAndNewlines)),
               parts.scheme?.lowercased() == "https", let host = parts.host, !host.isEmpty,
               parts.user == nil, parts.password == nil, parts.path.hasSuffix("/exec") else { return nil }
-        var items = (parts.queryItems ?? []).filter { !["key", "sid", "start_id", "since", "speech_interval"].contains($0.name) }
-        items.append(URLQueryItem(name: "key", value: key))
-        if let sid, let since {
-            items.append(URLQueryItem(name: "start_id", value: sid.uuidString))
-            items.append(URLQueryItem(name: "since", value: ISO8601DateFormatter().string(from: since)))
-        }
-        if let speechInterval { items.append(URLQueryItem(name: "speech_interval", value: speechInterval.rawValue)) }
-        parts.queryItems = items
-        parts.percentEncodedQuery = parts.percentEncodedQuery?.replacingOccurrences(of: "+", with: "%2B")
+        // Remove stale query parameters, including credentials from old settings.
+        parts.queryItems = (parts.queryItems ?? []).filter { !["key", "sid", "start_id", "since", "speech_interval"].contains($0.name) }
         parts.fragment = nil
         return parts.url
+    }
+
+    static func request(_ raw: String, key: String, sid: UUID, since: Date, speechInterval: SpeechInterval) -> URLRequest? {
+        guard let url = endpoint(raw, key: key) else { return nil }
+        let body: [String: String] = ["key": key, "start_id": sid.uuidString,
+            "since": ISO8601DateFormatter().string(from: since), "speech_interval": speechInterval.rawValue]
+        guard let data = try? JSONSerialization.data(withJSONObject: body) else { return nil }
+        var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 10)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = data
+        return request
     }
 
     static func today(_ date: Date = Date(), zone: TimeZone = .current) -> String {

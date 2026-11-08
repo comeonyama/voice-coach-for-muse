@@ -2,10 +2,14 @@ import SwiftUI
 import AVFoundation
 import CoreLocation
 import UIKit
+import Security
 
 @MainActor
 final class ReceiverModel: NSObject, ObservableObject {
-    static let workerURL = "https://vcm-queue.chibiken.workers.dev"
+    static let workerURL = ""
+    @Published var readToken: String {
+        didSet { saveReadToken() }
+    }
     @Published var queueURL: String { didSet { cachedRuns = nil; defaults.set(queueURL, forKey: "queueURL") } }
     var detectionURL: String { didSet { defaults.set(detectionURL, forKey: "detectionURL") } }
     var detectionKey: String { didSet { defaults.set(detectionKey, forKey: "detectionKey") } }
@@ -59,7 +63,7 @@ final class ReceiverModel: NSObject, ObservableObject {
         guard let source = QueueURL.source(queueURL) else { return }
         let url = source.deletingLastPathComponent().appendingPathComponent("history.json")
         do {
-            let request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 10)
+            let request = authenticatedRequest(url, timeout: 10)
             let (data, response) = try await network.data(for: request)
             try Task.checkCancellation()
             guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else { return }
@@ -118,6 +122,7 @@ final class ReceiverModel: NSObject, ObservableObject {
     init(defaults: UserDefaults) {
         self.defaults = defaults
         queueURL = defaults.string(forKey: "queueURL") ?? Self.workerURL
+        readToken = Self.loadReadToken()
         detectionURL = defaults.string(forKey: "detectionURL") ?? ""
         detectionKey = defaults.string(forKey: "detectionKey") ?? ""
         speechInterval = defaults.string(forKey: "speechInterval").flatMap(SpeechInterval.init(rawValue:)) ?? .threeMinutes
@@ -135,7 +140,7 @@ final class ReceiverModel: NSObject, ObservableObject {
         configuration.timeoutIntervalForRequest = 5
         configuration.timeoutIntervalForResource = 10
         configuration.waitsForConnectivity = false
-        network = URLSession(configuration: configuration)
+        network = URLSession(configuration: configuration, delegate: SafeRedirectDelegate(), delegateQueue: nil)
         coachingSpeaker.delegate = self
         coachingSpeaker.usesApplicationAudioSession = true
         speaker.delegate = self
@@ -216,7 +221,7 @@ final class ReceiverModel: NSObject, ObservableObject {
         guard let requestID = startRequest?.id else { return }
         do {
             let url = source.deletingLastPathComponent().appendingPathComponent("start-status.json")
-            let (data, response) = try await network.data(for: URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 5))
+            let (data, response) = try await network.data(for: authenticatedRequest(url, timeout: 5))
             guard !Task.isCancelled, running, token == runToken, requestID == startRequest?.id,
                   let http = response as? HTTPURLResponse, http.statusCode == 200 else { return }
             let status = try JSONDecoder().decode(StartStatus.self, from: data)
@@ -243,9 +248,8 @@ final class ReceiverModel: NSObject, ObservableObject {
                 }
                 do {
                     log("開始検知", "GASへキック送信")
-                    guard let url = LiveTrackKick.endpoint(detectionURL, key: detectionKey,
+                    guard let request = LiveTrackKick.request(detectionURL, key: detectionKey,
                         sid: start.id, since: start.since, speechInterval: speechInterval) else { return }
-                    let request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 10)
                     let (data, response) = try await network.data(for: request)
                     try Task.checkCancellation()
                     guard running, token == runToken, startRequest?.id == start.id else { return }
@@ -328,6 +332,35 @@ final class ReceiverModel: NSObject, ObservableObject {
         log("再生済みリセット")
     }
 
+    private static let readTokenService = "jp.voicecoach.worker.read-token"
+
+    private static func loadReadToken() -> String {
+        let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: readTokenService, kSecAttrAccount as String: "worker", kSecReturnData as String: true, kSecMatchLimit as String: kSecMatchLimitOne]
+        var result: CFTypeRef?
+        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess, let data = result as? Data else { return "" }
+        return String(data: data, encoding: .utf8) ?? ""
+    }
+
+    private func saveReadToken() {
+        let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: Self.readTokenService, kSecAttrAccount as String: "worker"]
+        SecItemDelete(query as CFDictionary)
+        guard !readToken.isEmpty else { return }
+        var item = query
+        item[kSecValueData as String] = Data(readToken.utf8)
+        item[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+        if SecItemAdd(item as CFDictionary, nil) != errSecSuccess { notice = "読み取りキーを保存できませんでした。" }
+    }
+
+    private func authenticatedRequest(_ url: URL, timeout: TimeInterval) -> URLRequest {
+        var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: timeout)
+        if let source = QueueURL.source(queueURL), url.scheme?.lowercased() == "https",
+           source.scheme?.lowercased() == "https", url.host?.lowercased() == source.host?.lowercased(),
+           (url.port ?? 443) == (source.port ?? 443), !readToken.isEmpty {
+            request.setValue(readToken, forHTTPHeaderField: "X-Read-Token")
+        }
+        return request
+    }
+
     func copyLogs() {
         UIPasteboard.general.string = logs.joined(separator: "\n")
         notice = "ログをコピーしました（時刻はUTC）。"
@@ -335,7 +368,7 @@ final class ReceiverModel: NSObject, ObservableObject {
 
     private func poll(_ source: URL, token: UUID) async {
         do {
-            var request = URLRequest(url: QueueURL.polling(source), cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 10)
+            var request = authenticatedRequest(QueueURL.polling(source), timeout: 10)
             request.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
             let (data, response) = try await network.data(for: request)
             try Task.checkCancellation()
@@ -691,7 +724,7 @@ final class ReceiverModel: NSObject, ObservableObject {
         let data: Data
         if url.isFileURL { data = try Data(contentsOf: url) }
         else {
-            var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 5)
+            var request = authenticatedRequest(url, timeout: 5)
             request.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
             let (download, response) = try await self.network.data(for: request)
             guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
@@ -918,4 +951,20 @@ extension ReceiverModel: CLLocationManagerDelegate {
 private enum ReceiverError: LocalizedError {
     case message(String)
     var errorDescription: String? { if case .message(let text) = self { return text }; return nil }
+}
+
+// Never forward the Worker read credential through a redirect. GAS redirects remain supported.
+private final class SafeRedirectDelegate: NSObject, URLSessionTaskDelegate {
+    func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse, newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
+        if task.originalRequest?.value(forHTTPHeaderField: "X-Read-Token") != nil { completionHandler(nil); return }
+        if task.originalRequest?.httpMethod == "POST" {
+            // Apps Script ContentService returns a one-time HTTPS URL via 302/303.
+            // Never replay the POST body (which contains the key) to any redirect target.
+            guard [302, 303].contains(response.statusCode), request.httpMethod == "GET",
+                  request.url?.scheme?.lowercased() == "https",
+                  let host = request.url?.host?.lowercased(),
+                  host == "script.googleusercontent.com", request.httpBody == nil else { completionHandler(nil); return }
+        }
+        completionHandler(request)
+    }
 }

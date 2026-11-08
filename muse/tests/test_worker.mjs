@@ -24,18 +24,27 @@ assert.equal((await worker.fetch(request(),{QUEUE_BUCKET:bucket,UPLOAD_TOKEN:"fi
 assert.deepEqual(deleted,[]);
 console.log("PASS cleanup grace and invalid queue");
 const store = new Map();
-const statusEnv = {UPLOAD_TOKEN:'fixture',QUEUE_BUCKET:{put:async(k,v)=>store.set(k,v),get:async k=>store.has(k)?{text:async()=>store.get(k)}:null}};
+const statusEnv = {UPLOAD_TOKEN:'fixture',READ_TOKEN:'reader',QUEUE_BUCKET:{put:async(k,v)=>store.set(k,v),get:async k=>store.has(k)?{text:async()=>store.get(k)}:null}};
 const sid='bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb';
 const payload={start_id:sid,state:'monitoring',at:new Date().toISOString(),token:'secret',session_id:'private'};
 const writeStatus=token=>new Request('https://fixture/upload?op=start-status',{method:'POST',headers:{'X-Upload-Token':token},body:JSON.stringify(payload)});
 assert.equal((await worker.fetch(writeStatus('wrong'),statusEnv)).status,401);
 assert.equal((await worker.fetch(writeStatus('fixture'),statusEnv)).status,200);
-const read=await worker.fetch(new Request('https://fixture/start-status.json'),statusEnv);
+assert.equal((await worker.fetch(new Request('https://fixture/start-status.json'),statusEnv)).status,401);
+const read=await worker.fetch(new Request('https://fixture/start-status.json',{headers:{'X-Read-Token':'reader'}}),statusEnv);
 assert.equal(read.headers.get('Cache-Control'),'no-store');
 assert.deepEqual(Object.keys(await read.json()).sort(),['at','start_id','state']);
 assert.equal((await worker.fetch(new Request('https://fixture/session.json'),statusEnv)).status,401);
 payload.state='invalid';assert.equal((await worker.fetch(writeStatus('fixture'),statusEnv)).status,400);
-console.log('PASS authenticated status writes, public allowlisted reads, private session');
+console.log('PASS authenticated status writes and reads, private session');
+for (const path of ['/queue.json','/history.json','/audio/example.mp3']) {
+  assert.equal((await worker.fetch(new Request('https://fixture'+path),statusEnv)).status,401);
+  assert.notEqual((await worker.fetch(new Request('https://fixture'+path,{headers:{'X-Read-Token':'reader'}}),statusEnv)).status,401);
+}
+assert.equal((await worker.fetch(new Request('https://fixture/session.json',{headers:{'X-Read-Token':'reader'}}),statusEnv)).status,401);
+assert.equal((await worker.fetch(new Request('https://fixture/queue.json',{headers:{'X-Read-Token':'reader'}}),{...statusEnv,READ_TOKEN:undefined})).status,401);
+assert.notEqual((await worker.fetch(new Request('https://fixture/queue.json',{headers:{'X-Upload-Token':'fixture'}}),statusEnv)).status,401);
+console.log('PASS read authorization and read-only token isolation');
 
 const upload=(op,body,token='fixture')=>worker.fetch(new Request('https://fixture/upload?op='+op,{
  method:'POST',headers:{'X-Upload-Token':token},body:JSON.stringify(body)}),statusEnv);

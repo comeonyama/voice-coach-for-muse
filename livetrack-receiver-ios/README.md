@@ -70,7 +70,7 @@ GAS・Worker・Museのwatcher/monitorも更新が必要です。更新方法と�
 - 音声が失敗しても文面は表示し、履歴に再生エラーと記録します。同じ開始期間中は失敗IDを繰り返さず、停止→開始またはアプリ再起動で再試行できます。
 - 不正なJSON全体は当該取得を失敗として次回へ継続。idが空／tsが不正の要素はログに残し除外します。
 - HTTPSを推奨。HTTP入力は受け付けますが、ATSにより拒否される配信先があります。全通信を許可するATS例外は入れていません。
-- ネイティブのURLSessionにはWebブラウザのCORS制限はありません。配信先の認証が必要な場合、その認証処理はv1にありません。
+- ネイティブのURLSessionにはWebブラウザのCORS制限はありません。Workerの読み取りには `X-Read-Token` を使います。読み取りキーはKeychainに保存し、Workerと同じHTTPS接続先にのみ送ります。
 
 ## 音声セッションの実装
 
@@ -174,15 +174,15 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer xcrun swiftc \
 ## アプリ開始を基準にするLiveTrack検知
 
 通常操作は「アプリでコーチング開始 → ウォッチでアクティビティ開始」。
-開始時のUUIDとUTC時刻を保存し、GASに `key` / `start_id` / `since` を渡す。
+開始時のUUIDとUTC時刻を保存し、GASへのPOST本文で `key` / `start_id` / `since` を渡す。
 待機中のアプリ再起動では同じ要求を再開し、停止→開始では新しく生成する。
 15分通知済みフラグも保存し、30分の上限は元の開始時刻から数える。
-GASのfoundは検知だけを意味する。監視中表示は公開start-status.jsonの
+GASのfoundは検知だけを意味する。監視中表示は認証付きstart-status.jsonの
 自分の開始IDがmonitoringになったときだけで、当日queue名では判定しない。
 
 配置はWorker・VMを準備後、新アプリを先に配布し、GASの既存デプロイを
 「新しいバージョン」で更新する（/exec URL維持、新規デプロイ不要）。
-GAS更新後はstart_id/sinceのない旧アプリでは検知できない。
+GAS更新後はGETを使う旧アプリでは検知できず、新アプリもPOST未対応の旧GASでは検知できない。
 詳細は [GAS手順](../gas/README.md) を参照。
 
 ## 1.4.6 (17) の音声テストと待機処理

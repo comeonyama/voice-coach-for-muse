@@ -1,8 +1,7 @@
 // VCM (Voice Coach for Muse) queue worker.
 //
-// 配信基盤の Cloudflare 版 (旧 XServer 構成から移行)。公開側の
-// 読み取りと、トークン認証付きの書き込みを
-// 1 つの Worker で担い、実データは R2 に置く。
+// 配信基盤の Cloudflare 版。読み取りと書き込みをトークン認証で保護し、
+// 実データは R2 に置く。
 //
 //   GET  /queue.json        -> R2 の "queue.json" をそのまま返す (no-store)
 //   GET  /history.json      -> R2 の "history.json" をそのまま返す (no-store)
@@ -26,12 +25,12 @@
 //     いない MP3 のうち n 秒より古いものを削除する
 //
 // R2 は強い整合性なので、PUT 直後の GET で新しい内容が読める。
-// queue.json は設計上公開読み取り可 (コーチング文と音声名のみを入れ、
-// 個人情報やトークンは入れないこと)。
+// queue・履歴・音声・開始状態は読み取り用またはアップロード用トークンが必要。
 //
 // 必要なバインディング:
 //   QUEUE_BUCKET : R2 bucket
-//   UPLOAD_TOKEN : secret (wrangler secret put UPLOAD_TOKEN)
+//   UPLOAD_TOKEN : 書き込みと全読み取り用 secret
+//   READ_TOKEN : キュー・履歴・音声・開始状態の読み取り専用 secret
 
 const MAX_AUDIO_BYTES = 2097152;
 const AUDIO_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*\.mp3$/;
@@ -44,6 +43,11 @@ function json(status, obj) {
       "Cache-Control": "no-store",
     },
   });
+}
+
+function canRead(request, env) {
+  const token = request.headers.get("X-Read-Token");
+  return Boolean(token && env.READ_TOKEN && token === env.READ_TOKEN) || Boolean(checkToken(request, env));
 }
 
 function checkToken(request, env) {
@@ -71,6 +75,11 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
 
+    if (request.method === "GET" && (url.pathname === "/start-status.json" || url.pathname === "/queue.json" ||
+        url.pathname === "/history.json" || url.pathname.startsWith("/audio/")) && !canRead(request, env)) {
+      return json(401, { ok: false, error: "unauthorized" });
+    }
+
     if (request.method === "GET" && url.pathname === "/start-status.json") {
       const obj = await env.QUEUE_BUCKET.get("start-status.json");
       if (!obj) return json(404, { ok: false, error: "no start status" });
@@ -78,7 +87,7 @@ export default {
       return json(200, { start_id: value.start_id, state: value.state, at: value.at });
     }
 
-    // ---- public reads -------------------------------------------------
+    // ---- authenticated reads ------------------------------------------
     if (request.method === "GET" && url.pathname === "/queue.json") {
       const obj = await env.QUEUE_BUCKET.get("queue.json");
       if (obj === null) {

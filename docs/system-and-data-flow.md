@@ -32,7 +32,7 @@ flowchart TB
   end
   Watcher -->|非公開セッション情報を取得| Worker
   Watcher -->|監視状態を認証付きで保存| Worker
-  Phone -->|公開start-statusを取得| Worker
+  Phone -->|認証付きでstart-statusを取得| Worker
   Poll -->|走行データを取得| Garmin
   Publish -->|音声化を依頼| TTS[Muse TTS / Aria]
   TTS -->|MP3| Publish
@@ -66,7 +66,7 @@ sequenceDiagram
   Note over I: 時計でアクティビティを開始するよう案内
   U->>M: 時計の開始後、Garminから開始メールが届く
   loop 未検知の間、約30秒ごと（最大30分）
-    I->>G: GET /exec（key・start_id・since）
+    I->>G: POST /exec（JSON本文にkey・start_id・since）
     Note over G: 必須パラメータ検証・同じ開始IDの投稿済み確認
     G->>M: 開始メール検索（全ページ）
     M-->>G: 検索結果
@@ -96,7 +96,7 @@ sequenceDiagram
 
 ### GASスクリプト（LiveTrack開始メール確認）の呼び出し仕様と候補選択
 
-- `key`、`start_id`（UUID）、`since`（ISO 8601 UTC）が必須。欠落・不正ならエラーで、旧方式へ戻さない。
+- POSTのJSON本文に `key`、`start_id`（UUID）、`since`（ISO 8601 UTC）が必須。GETの認証は受け付けず、キーをURLに含めない。欠落・不正ならエラーで、旧方式へ戻さない。
 - **`sid` はGASの予約パラメータなので使用しない。** アプリは設定URLに残った旧 `sid` も取り除いて送信する。
 - 候補はLiveTrack URLを抽出できる未処理メールのうち、受信時刻が `since - 120秒` 以降、かつ受信から30分以内の最新のもの。
 - 120秒は時計ずれの許容幅。この範囲内の開始前メールも候補になり得る。
@@ -118,7 +118,7 @@ sequenceDiagram
 ### 設定とデプロイ
 
 `WORKER_BASE` は必須。未設定なら認証済みの呼び出しに `ok:false` と理由を返す。
-開始ID方式に未対応の旧環境から移行する場合は、Worker・VMを対応版にしてから、新アプリを配布し、GASを更新する。GAS更新後は、必須パラメータのない旧アプリでは検知できない。
+移行時はWorker・VMを対応版にし、新アプリを配布してGASを更新する。新アプリはPOST未対応の旧GASでは検知できず、新GASはGETを使う旧アプリでは検知できない。ランの合間に切り替え、実際に開始検知を確認する。
 
 GASは「デプロイを管理 → 既存デプロイを編集 → 新しいバージョン」で更新すれば `/exec` URLを維持できる。「新しいデプロイ」を作ると別URLになるため、アプリの検知URLも更新する。
 
@@ -201,18 +201,18 @@ flowchart TD
 |---|---|---|---|
 | 開始メール | Gmail | Garmin側 | GAS、手動開始経路 |
 | session.json | R2 | GAS（Worker経由） | VMウォッチャー。開始IDとLiveTrack ID・トークンを含むため認証付き |
-| start-status.json | R2 | VMウォッチャー（Worker経由） | iPhone。start_id / state / atのみ公開。LiveTrack ID・トークン・URLは含めない |
+| start-status.json | R2 | VMウォッチャー（Worker経由） | iPhone。start_id / state / atのみ返す（認証付き）。LiveTrack ID・トークン・URLは含めない |
 | 処理済みメールID・最後の開始IDとセッションの対応 | GAS Script Properties | GAS | 再投稿防止と同じ開始IDへの応答 |
 | 開始ID・待機開始時刻・待機状態・通知済みフラグ | iPhone | iOSアプリ | GASスクリプトの呼び出し継続、再起動後の待機復元 |
-| queue.json | R2 | publish.py（Worker経由） | iPhone。現在のsessionとメッセージ一覧。公開読み取り |
-| audio/*.mp3 | R2 | publish.py（Worker経由） | iPhone。公開読み取り |
-| history.json | R2 | publish.py（Worker経由） | iPhone。過去ランの文面。公開読み取り、直近10ラン程度 |
+| queue.json | R2 | publish.py（Worker経由） | iPhone。現在のsessionとメッセージ一覧。認証付き読み取り |
+| audio/*.mp3 | R2 | publish.py（Worker経由） | iPhone。認証付き読み取り |
+| history.json | R2 | publish.py（Worker経由） | iPhone。過去ランの文面。認証付き読み取り、直近10ラン程度 |
 | session / poll / watcher / finishの状態 | VMローカル | 各Pythonプログラム | 監視の再開、終了処理の再開、最終正常値の保持 |
 | queue・historyの控え、生成MP3 | VMローカル | publish.py | 配信作業と復旧。historyはサーバーの既存内容を取得して統合 |
 | 使用済みコメント・診断ログ | VMローカル | 監視プログラムなど | 重複抑制、障害調査 |
 | 再生済みID・ローカル履歴・設定 | iPhone | iOSアプリ | 再生管理、オフライン時の履歴表示 |
 
-Workerは入口・認証・読み書きを担当し、データ本体はバインディング `QUEUE_BUCKET` で接続したR2に置く。書き込みは `X-Upload-Token` が必要。公開GETはキャッシュさせない設定。
+Workerは入口・認証・読み書きを担当し、データ本体はバインディング `QUEUE_BUCKET` で接続したR2に置く。書き込みは `X-Upload-Token` が必要。読み取りは `X-Read-Token` または `X-Upload-Token`、session.jsonは後者のみ必要。認証付きGETはキャッシュさせない設定。
 
 iPhoneの履歴は「現在のqueueとローカル履歴」＋「history.json」を統合する。過去ランは再生対象にせず、historyが取得できない場合もローカル表示を続ける。再インストールで復元できるのはサーバーに保存された履歴であり、端末内の全状態が復元されるわけではない。
 

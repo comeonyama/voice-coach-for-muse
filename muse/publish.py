@@ -5,8 +5,7 @@ Upload path: HTTPS POST to https://<VCM_WORKER_HOST>/upload
 (op=audio / op=queue / op=cleanup), authenticated with the X-Upload-Token
 credential held by the custom.vcm-worker-upload connection (surrogate
 exchange; the real token never appears in this script, its arguments, or
-its logs). Queue and audio live in R2 behind the Worker; the public read
-side is https://<VCM_WORKER_HOST>/queue.json.
+its logs). Queue and audio live in R2 behind the Worker; reads require authentication.
 
 Local mirror of the queue lives in $VCM_QUEUE_DIR (default ~/vcm/queue)
 (queue.json + audio/). Commands:
@@ -66,6 +65,7 @@ def serialized(function):
 def remote_history():
     request = urllib.request.Request(f"https://{HOST}/history.json",
                                      headers={"User-Agent": UA, "Cache-Control": "no-cache"})
+    add_surrogate_to_request(request, os.environ.get("VCM_CONNECTOR_ID", "custom.vcm-worker-upload"), allowed_hosts=[HOST])
     with urllib.request.build_opener(NoRedirect()).open(request, timeout=30) as response:
         history = json.load(response)
     validate_history(history)

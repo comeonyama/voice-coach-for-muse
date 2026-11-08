@@ -1,6 +1,7 @@
 const fs = require('node:fs'), vm = require('node:vm'), assert = require('node:assert/strict');
 const start_id='bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb';
 const since=()=>new Date().toISOString();
+const post=(c,data)=>c.doPost({postData:{type:'application/json',contents:JSON.stringify(data)}});
 function fixture(properties = {}) {
   const p = {WORKER_BASE:'https://fixture.workers.dev', KICK_SECRET:'fixture', ...properties};
   const state = {messages:[], posts:0, status:200, pages:0, requests:[]};
@@ -33,17 +34,17 @@ function mail(id,age=1) {return {getId:()=>id,getDate:()=>new Date(Date.now()-ag
  state.messages=Array.from({length:101},(_,i)=>mail('m'+i,i===100?1:31));assert.equal(c.findAndPost_(start_id,since()).found,true);assert.ok(state.pages>=3);
 }
 {
- const {p,state,c}=fixture({PROCESSED_MAIL_IDS:'invalid'});assert.equal(c.doGet({parameter:{key:'fixture',start_id,since:since()}}).ok,false);assert.equal(state.posts,0);
- delete p.WORKER_BASE;assert.match(c.doGet({parameter:{key:'fixture',start_id,since:since()}}).error,/WORKER_BASE is not set/);
- assert.equal(c.doGet({parameter:{key:'wrong'}}).error,'unauthorized');
+ const {p,state,c}=fixture({PROCESSED_MAIL_IDS:'invalid'});assert.equal(post(c,{key:'fixture',start_id,since:since()}).ok,false);assert.equal(state.posts,0);
+ delete p.WORKER_BASE;assert.match(post(c,{key:'fixture',start_id,since:since()}).error,/WORKER_BASE is not set/);
+ assert.equal(post(c,{key:'wrong'}).error,'unauthorized');
 }
 console.log('PASS migration, newest unprocessed, deduplication, 20-ID cap, retry, freshness, pagination, config/auth');
 
 {
  const {state,c}=fixture();state.messages=[mail('old',12)];
- assert.equal(c.doGet({parameter:{key:'fixture'}}).ok,false);
- assert.equal(c.doGet({parameter:{key:'fixture',start_id}}).ok,false);
- assert.equal(c.doGet({parameter:{key:'fixture',since:since()}}).ok,false);
+ assert.equal(post(c,{key:'fixture'}).ok,false);
+ assert.equal(post(c,{key:'fixture',start_id}).ok,false);
+ assert.equal(post(c,{key:'fixture',since:since()}).ok,false);
  assert.equal(c.findAndPost_(start_id,since()).found,false);assert.equal(state.posts,0);
  state.messages=[mail('fresh',0)];assert.equal(c.findAndPost_(start_id,since()).found,true);
  assert.equal(c.findAndPost_(start_id,since()).already,true);assert.equal(state.posts,1);
@@ -51,16 +52,16 @@ console.log('PASS migration, newest unprocessed, deduplication, 20-ID cap, retry
 console.log('PASS required start_id/since, start-time gate, same-start idempotency');
 {
  const {state,c}=fixture();state.messages=[mail('fresh',0)];
- const old=c.doGet({parameter:{key:'fixture',sid:start_id,since:since()}});
+ const old=post(c,{key:'fixture',sid:start_id,since:since()});
  assert.equal(old.ok,false);assert.equal(state.posts,0);
- const reply=c.doGet({parameter:{key:'fixture',start_id,since:since()}});
+ const reply=post(c,{key:'fixture',start_id,since:since()});
  assert.equal(reply.ok,true);assert.equal(reply.found,true);assert.equal(state.posts,1);
 }
-console.log('PASS doGet accepts start_id and rejects legacy sid');
+console.log('PASS doPost accepts start_id and rejects legacy sid');
 
 {
  const {p,state,c}=fixture();state.messages=[mail('fresh',0)];
- const kick=value=>c.doGet({parameter:{key:'fixture',start_id,since:since(), ...(value===undefined?{}:{speech_interval:value})}});
+ const kick=value=>post(c,{key:'fixture',start_id,since:since(), ...(value===undefined?{}:{speech_interval:value})});
  assert.equal(kick('per_500m').ok,true);
  assert.equal(state.requests[0].body.speech_interval,'per_500m');
  const pages=state.pages, processed=p.PROCESSED_MAIL_IDS;
@@ -77,3 +78,13 @@ console.log('PASS doGet accepts start_id and rejects legacy sid');
  c.findAndPost_(start_id,since());assert.equal('speech_interval' in state.requests[0].body,false);
 }
 console.log('PASS cadence initial forwarding, same-start update without mail or session repost, retry and legacy omission');
+
+{
+ const {c,state}=fixture();
+ assert.equal(c.doGet({parameter:{key:'fixture',start_id,since:since()}}).error,'unauthorized');
+ assert.equal(c.doPost({postData:{contents:'not-json'}}).error,'unauthorized');
+ assert.equal(c.doPost({postData:{contents:'null'}}).error,'unauthorized');
+ assert.equal(c.doPost({parameter:{key:'fixture',start_id,since:since()},postData:{contents:'{}'}}).error,'unauthorized');
+ assert.equal(state.posts,0);
+}
+console.log('PASS only authenticated JSON POST; query credentials rejected');

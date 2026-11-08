@@ -57,7 +57,7 @@ iOS版は `livetrack-receiver-ios/Voice Coach for Muse.xcodeproj` をXcodeで開
 
 ## データ配信
 
-Museが更新する `queue.json` とMP3をHTTP(S)で配信し、アプリにURLを設定します。相対音声パスはqueue.jsonを基準に解決します。`audio:null` のメッセージはiOS TTSで読み上げます。過去ランの履歴は `history.json` で配信します。アプリから再生完了ACKや削除は送りません。開始検知のためのGASへの呼び出しは行います。
+Museが更新する `queue.json` とMP3を認証付きHTTPSで配信し、アプリにWorkerのURLと読み取りキーを設定します。相対音声パスはqueue.jsonを基準に解決します。`audio:null` のメッセージはiOS TTSで読み上げます。過去ランの履歴は `history.json` で配信します。アプリから再生完了ACKや削除は送りません。開始検知のためのGASへの呼び出しは行います。
 
 詳細なJSON形式、ビルド・インストール方法、検証手順は各READMEを参照してください。
 

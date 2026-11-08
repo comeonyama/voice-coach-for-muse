@@ -5,20 +5,17 @@ import Foundation
         let start = StartRequest()
         let restoredStart = try JSONDecoder().decode(StartRequest.self, from: JSONEncoder().encode(start))
         precondition(restoredStart.id == start.id && restoredStart.since == start.since && restoredStart.phase == "waiting")
-        let kick = LiveTrackKick.endpoint("https://example.com/exec?sid=old&start_id=old&since=old", key: "secret", sid: start.id, since: start.since)!
-        let parameters = URLComponents(url: kick, resolvingAgainstBaseURL: false)!.queryItems!
-        precondition(!parameters.contains { $0.name == "sid" })
-        precondition(parameters.filter { $0.name == "start_id" }.count == 1)
-        precondition(parameters.first { $0.name == "start_id" }?.value == start.id.uuidString)
-        precondition(parameters.first { $0.name == "since" }?.value?.hasSuffix("Z") == true)
+        let kick = LiveTrackKick.request("https://example.com/exec?key=old&sid=old&start_id=old&since=old", key: "secret", sid: start.id, since: start.since, speechInterval: .threeMinutes)!
+        precondition(kick.httpMethod == "POST" && !(kick.url!.absoluteString.contains("secret")))
+        let parameters = URLComponents(url: kick.url!, resolvingAgainstBaseURL: false)!.queryItems ?? []
+        precondition(!parameters.contains { ["key", "sid", "start_id", "since", "speech_interval"].contains($0.name) })
+        let body = try JSONSerialization.jsonObject(with: kick.httpBody!) as! [String: String]
+        precondition(body["key"] == "secret" && body["start_id"] == start.id.uuidString && body["since"]?.hasSuffix("Z") == true)
         for preference in SpeechInterval.allCases {
-            let url = LiveTrackKick.endpoint("https://example.com/exec?speech_interval=old", key: "secret",
-                sid: start.id, since: start.since, speechInterval: preference)!
-            let query = URLComponents(url: url, resolvingAgainstBaseURL: false)!.queryItems!
-            precondition(query.filter { $0.name == "speech_interval" }.count == 1)
-            precondition(query.first { $0.name == "speech_interval" }?.value == preference.rawValue)
+            let request = LiveTrackKick.request("https://example.com/exec", key: "secret", sid: start.id, since: start.since, speechInterval: preference)!
+            let payload = try JSONSerialization.jsonObject(with: request.httpBody!) as! [String: String]
+            precondition(payload["speech_interval"] == preference.rawValue)
         }
-        precondition(!parameters.contains { $0.name == "speech_interval" })
         let source = QueueURL.source("https://example.com/runs/queue.json?token=abc")!
         precondition(QueueURL.audio("audio/m1.mp3", relativeTo: source)?.absoluteString == "https://example.com/runs/audio/m1.mp3")
         precondition(QueueURL.source("file:///tmp/queue.json") == nil)
@@ -68,7 +65,10 @@ import Foundation
         precondition(LiveTrackKick.endpoint(script, key: "") == nil)
         precondition(LiveTrackKick.endpoint("", key: "test") == nil)
         let endpoint = LiveTrackKick.endpoint(script + "?key=old", key: "a+b&c")!
-        precondition(endpoint.query == "key=a%2Bb%26c")
+        precondition(endpoint.query == nil || endpoint.query == "")
+        let special = LiveTrackKick.request(script, key: "a+b&c", sid: start.id, since: start.since, speechInterval: .threeMinutes)!
+        let specialBody = try JSONSerialization.jsonObject(with: special.httpBody!) as! [String: String]
+        precondition(specialBody["key"] == "a+b&c" && !special.url!.absoluteString.contains("a+b"))
         let midnight = ISO8601DateFormatter().date(from: "2026-11-02T15:00:00Z")!
         precondition(LiveTrackKick.today(midnight, zone: TimeZone(secondsFromGMT: 32400)!) == "run-2026-11-03")
         print("PASS: relative URLs, invalid schemes, cache query, duplicate prevention, relaunch persistence, failed-item retry, session/source isolation, reset, JSON/date contract")

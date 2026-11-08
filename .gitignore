@@ -31,3 +31,21 @@ __pycache__/
 /monitor/*.log
 !/monitor/*.sample.json
 /state/
+
+# Current Muse runtime data and local configuration
+/muse/state/
+/muse/queue/
+/muse/coach_config.json
+/muse/comment_stock.json
+/muse/*.log
+/muse/*.jsonl
+/muse/connector.yaml
+/muse/session.json
+/muse/poll_state*.json
+/muse/coach_state.json
+/muse/finish_state.json
+/muse/watcher_state.json
+/muse/used_comments.json
+/muse/history.json
+/muse/last_session_mail.json
+/muse/*.corrupt-*

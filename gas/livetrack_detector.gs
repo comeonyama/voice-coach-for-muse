@@ -6,7 +6,7 @@
  *
  * 使い方:
  *   - Web アプリとしてデプロイすると、iOS アプリから URL を叩いて
- *     起動できる (doGet)。?key=<KICK_SECRET> が必須。
+ *     起動できる (doPost)。JSON本文に key を含める。
  *   - start_id / since は必須。speech_interval は任意。時間主導トリガーは使わない。
  *
  * スクリプトプロパティ (プロジェクトの設定 > スクリプト プロパティ):
@@ -40,15 +40,26 @@ function jsonOut_(obj) {
     .setMimeType(ContentService.MimeType.JSON);
 }
 
-/** アプリからのキック入口。 */
+/** GETでは認証情報を受け付けない。 */
 function doGet(e) {
+  return jsonOut_({ ok: false, error: 'unauthorized' });
+}
+
+/** アプリからの認証付きPOST入口。秘密値はURLに含めない。 */
+function doPost(e) {
+  var data;
+  try {
+    data = JSON.parse(e && e.postData && e.postData.contents || '');
+  } catch (_) {
+    return jsonOut_({ ok: false, error: 'unauthorized' });
+  }
   var secret = props_().getProperty('KICK_SECRET');
-  if (!secret || !e || !e.parameter || e.parameter.key !== secret) {
+  if (!secret || !data || typeof data !== 'object' || Array.isArray(data) || data.key !== secret) {
     return jsonOut_({ ok: false, error: 'unauthorized' });
   }
   try {
-    workerBase_(); // メールの有無や処理済み判定に関係なく設定漏れを通知する
-    return jsonOut_(findAndPost_(e.parameter.start_id, e.parameter.since, e.parameter.speech_interval));
+    workerBase_();
+    return jsonOut_(findAndPost_(data.start_id, data.since, data.speech_interval));
   } catch (err) {
     var message = err && err.message;
     var safe = ['WORKER_BASE is not set', 'start_id must be a UUID', 'since must be ISO 8601 UTC',
