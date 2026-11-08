@@ -15,7 +15,7 @@ Voice Coach for Muse の「頭脳」側一式。Garmin LiveTrack を監視し、
 |---|---|
 | `livetrack_poll.py` | LiveTrack API のポーリング。セッション情報と軌跡を取得し、距離・時間・心拍・スプリットを JSON で返す |
 | `coach_monitor.py` | 監視ループ本体。文面の組み立て、送信タイミング、終了処理、再送を担う |
-| `publish.py` | 発行係。Muse TTS で音声化し、Worker のキューへ上げる (ローカルミラーも保持) |
+| `publish.py` | 発行係。Muse TTS で音声化し、Worker（データの受け渡し）のキューへ上げる (ローカルミラーも保持) |
 | `session_watcher.py` | `--once`で開始準備と状態反映。常駐モードはロールバック用に保持 |
 | `run_watch.py` | 手動開始用。待機音声を流しながら開始メールを検知し、監視へ渡す |
 | `wait_announce.py` | 検知までの待機音声 (run_watch から起動される) |
@@ -66,7 +66,7 @@ Voice Coach for Muse の「頭脳」側一式。Garmin LiveTrack を監視し、
 - 実行時状態 (セッション情報、ポーリング状態、使用済みコメント、ログ)
 - トークン類 (LiveTrack トークン、アップロードトークン)
 
-これらは .gitignore でも除外している。
+これらをリポジトリに追加しないこと。ルートの `.gitignore` はすべての保存場所を網羅していないため、状態・設定の配置先と `git status` を確認する。
 
 単発モードは `coach_state.json` に送信ルールの進行状態と実行途中の送信を保存します。
 監視サイクルは各回で終了し、認証はフック実行時の環境から受け取ります。
@@ -100,4 +100,4 @@ Voice Coach for Muse の「頭脳」側一式。Garmin LiveTrack を監視し、
 
 `coach_state.json` の `last_send_distance_km` は成功した実際の送信地点です。旧stateにない場合は `last_send_km` から移行します（旧stateに保存されなかった小数部分は復元できません）。切替では前回の送信地点・時刻を保持します。ポーラーの `distance_km` は既存の小数距離を利用し、kmスプリットは高度判定用に維持します。500mのためにkmスプリットの意味を変えません。
 
-Workerの設定更新は開始IDを照合し、R2の条件付き書き込みで読み取り後のセッション変更も検出します（[R2公式API](https://developers.cloudflare.com/r2/api/workers/workers-api-reference/)）。新しいランへの古い設定の書き戻しを防ぎ、競合は次のキックで再試行します。
+Workerの設定更新は開始IDを照合し、R2の条件付き書き込みで読み取り後のセッション変更も検出します（[R2公式API](https://developers.cloudflare.com/r2/api/workers/workers-api-reference/)）。新しいランへの古い設定の書き戻しを防ぎ、競合は次回のGASスクリプト実行時に再試行します。
