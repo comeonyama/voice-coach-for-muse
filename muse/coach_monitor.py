@@ -38,7 +38,7 @@ Comment selection order per message:
   2. milestone (configured km marks)
   3. progress note (every Nth message, if enabled)
   4. motivational line (every Nth message, if enabled)
-  5. neta pool (in order), then tips pool (in order)
+  5. neta pool, then today's daily topics, then tips (each in order)
   6. climb note for the latest completed km
   7. generated progress fallback
 Every delivered comment is appended to used_comments.json in the state
@@ -54,6 +54,7 @@ Exit code 0 = finished normally, 2 = aborted (poll failures).
 """
 import argparse
 import datetime
+import hashlib
 import json
 import pathlib
 import os
@@ -114,7 +115,23 @@ class Monitor:
         self.log_path = self.state_dir / "coach_log.jsonl"
         self.used_path = self.state_dir / "used_comments.json"
         self.used = self._load_used()
+        self.retired_daily = []
+        self.replayed_retired_daily = None
+        self.selected_daily = None
         self.neta = list(neta)
+        topics = stock.get("daily_topics")
+        date = stock.get("daily_topics_date")
+        if (isinstance(date, str) and date == self._today()
+                and isinstance(topics, list) and all(isinstance(topic, str) for topic in topics)):
+            self.daily = list(topics)
+            self.daily_date = date
+            self.daily_source_hash = hashlib.sha256(
+                json.dumps(topics, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+            ).hexdigest()
+        else:
+            self.daily = []
+            self.daily_date = None
+            self.daily_source_hash = None
         self.tips = list(stock.get("tips", []))
         self.motivational = list(stock.get("motivational", []))
         self.seq = self._initial_seq()
@@ -158,6 +175,9 @@ class Monitor:
                     "last_fast_advice", "last_dist", "last_dur", "saw_live", "start_announced",
                     "total_ascent_m", "last_elevation_split")
 
+    def _today(self):
+        return datetime.datetime.now(self.tz).date().isoformat()
+
     def restore_cycle(self):
         state = read_state(self.state_dir / "coach_state.json", {})
         if state.get("queue_session") != self.session.get("queue_session"):
@@ -173,8 +193,30 @@ class Monitor:
         self.cycle_started_at = state.get("started_at", time.time())
         for name in ("neta", "tips", "motivational"):
             if name in state: setattr(self, name, state[name])
+        # Restore only the same day's unchanged stock. An old checkpoint must
+        # not resurrect yesterday's topics or hide a newly updated batch.
+        daily = state.get("daily")
+        if (self.daily_date == self._today() and state.get("daily_date") == self.daily_date
+                and state.get("daily_source_hash") == self.daily_source_hash
+                and isinstance(daily, list) and all(isinstance(topic, str) for topic in daily)):
+            self.daily = list(daily)
         if "used" in state: self.used = set(state["used"])
         self.inflight = state.get("inflight", {})
+        # A failed or interrupted send may be replayed after the daily stock
+        # expires or changes. Reuse its ID, but do not replay an old topic.
+        if (state.get("daily_date") != self.daily_date
+                or state.get("daily_source_hash") != self.daily_source_hash):
+            old_daily = state.get("daily", [])
+            if isinstance(old_daily, list) and isinstance(self.inflight, dict):
+                self.retired_daily = [topic for topic in old_daily if isinstance(topic, str) and topic]
+                for delivery in self.inflight.get("deliveries", []):
+                    if (isinstance(delivery, dict) and not delivery.get("ok")
+                            and self._retired_daily_topic(delivery) is not None):
+                        delivery["text"] = None
+
+    def _retired_daily_topic(self, delivery):
+        topic = delivery.get("daily_topic")
+        return topic if isinstance(topic, str) and topic in self.retired_daily else None
 
     def cycle_state(self):
         state = {name: getattr(self, name) for name in self.STATE_FIELDS}
@@ -182,7 +224,9 @@ class Monitor:
                      hydration_marks_done=sorted(self.hydration_marks_done),
                      milestones_done=sorted(self.milestones_done),
                      started_at=getattr(self, "cycle_started_at", time.time()))
-        state.update(neta=self.neta, tips=self.tips, motivational=self.motivational, used=sorted(self.used))
+        state.update(neta=self.neta, daily=self.daily, daily_date=self.daily_date,
+                     daily_source_hash=self.daily_source_hash, tips=self.tips,
+                     motivational=self.motivational, used=sorted(self.used))
         return state
 
     def save_cycle(self):
@@ -308,10 +352,21 @@ class Monitor:
             self.delivery_index += 1
             if index < len(deliveries):
                 delivery = deliveries[index]
-                mid, text = delivery["id"], delivery["text"]
-                if delivery.get("ok"): return True
+                mid = delivery["id"]
+                if delivery.get("ok"):
+                    self.replayed_retired_daily = self._retired_daily_topic(delivery)
+                    return True
+                if delivery.get("text") is None:
+                    delivery["text"] = text
+                    delivery.pop("daily_topic", None)
+                    if self.selected_daily:
+                        delivery["daily_topic"] = self.selected_daily
+                else:
+                    text = delivery["text"]
             else:
                 delivery = {"id": mid, "text": text, "ok": False}
+                if self.selected_daily:
+                    delivery["daily_topic"] = self.selected_daily
                 deliveries.append(delivery)
             self.persist_inflight()
         verb = "say" if self.cfg.get("audio", True) else "post"
@@ -370,6 +425,7 @@ class Monitor:
         return s
 
     def pick_comment(self, dist, dur, session_start_iso, recent_pace, now):
+        self.selected_daily = None
         cfg = self.cfg
         altitude = cfg.get("altitude") or {}
         split = self.last_elevation_split or {}
@@ -416,8 +472,16 @@ class Monitor:
             c = self._take(self.motivational)
             if c:
                 return c, False
-        # 5) neta, then tips
-        c = self._take(self.neta) or self._take(self.tips)
+        # 5) neta, then today's daily topics, then tips.
+        # Also expire the pool if a long-running monitor crosses midnight.
+        if self.daily_date != self._today():
+            self.daily = []
+        c = self._take(self.neta)
+        if not c:
+            c = self._take(self.daily)
+            self.selected_daily = c
+        if not c:
+            c = self._take(self.tips)
         if c:
             return c, False
         # 6) Climb note only after ordinary materials are exhausted.
@@ -573,9 +637,16 @@ class Monitor:
                 # ordinary coaching must wait for at least one live value.
                 has_live_data = dist > 0 or dur > 0 or (hr is not None and hr > 0)
                 if has_live_data and self.send_due(dist, now):
+                    pools_before = (self.neta[:], self.daily[:], self.tips[:], self.motivational[:])
                     comment, is_advice = self.pick_comment(dist, dur, session.get("start"),
                                                            recent_pace, now)
+                    self.replayed_retired_daily = None
                     if self.say(self.spine(dist, avg, hr) + comment):
+                        if self.replayed_retired_daily is not None:
+                            # This message was already sent before the checkpoint.
+                            # Reconcile that old comment without consuming new stock.
+                            self.neta, self.daily, self.tips, self.motivational = pools_before
+                            comment, is_advice = self.replayed_retired_daily, False
                         self.sent += 1
                         self.last_send_km = int(dist)
                         self.last_send_distance_km = dist
@@ -599,7 +670,7 @@ def main():
     ap.add_argument("--config", required=True)
     ap.add_argument("--session", required=True, help='JSON file: {"session_id", "token"}')
     ap.add_argument("--neta", help="JSON list of prepared comments for this run")
-    ap.add_argument("--stock", help='JSON file: {"tips": [...], "motivational": [...]}')
+    ap.add_argument("--stock", help='JSON stock: tips, motivational, daily_topics and daily_topics_date')
     args = ap.parse_args()
 
     cfg = json.loads(pathlib.Path(args.config).read_text())
