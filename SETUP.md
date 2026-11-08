@@ -72,7 +72,7 @@ iOS アプリ ──キューを取得──▶ 新着を再生 (再生中は音
 - **Muse アカウント**（監視プログラムの実行、音声合成、20秒間隔の単発実行は、Muse の環境と仕組みを使います）
 - iPhoneと、受信アプリをビルド・インストールするためのMac + Xcode、署名に使うApple Account（詳しくは[iOSの手順](livetrack-receiver-ios/README.md)）
 - Google アカウント（開始通知メールを受信する Gmail と、検知用スクリプトの実行に使う）
-- Cloudflare アカウント（配信基盤の置き場）
+- Cloudflare アカウント（配信基盤の置き場。**独自ドメインの購入・保有は不要**）
 
 <a id="step-1"></a>
 
@@ -90,6 +90,10 @@ iOS アプリ ──キューを取得──▶ 新着を再生 (再生中は音
 ## ステップ 2: 配信基盤を作る（Cloudflare）
 
 音声とキューの置き場をCloudflareに作ります。リポジトリの `worker/` と、設定ファイル `worker/wrangler.toml` を使います。
+
+各利用者が自分の Cloudflare アカウントに Worker と R2 バケットを作ります。独自ドメインを持っていなくても、Cloudflare の `workers.dev` の URL（例：`https://vcm-queue.example.workers.dev`）を利用できます。`example` の部分はアカウントごとの名前です。例の URL や他の利用者の URL ではなく、デプロイ時に表示された自分の URL を GAS・Muse・iOS アプリに設定してください。
+
+R2 は Cloudflare の画面で有効化が必要です。無料利用枠がありますが、利用量が枠を超えると料金が発生します。有効化時の案内と、最新の [R2 料金](https://developers.cloudflare.com/r2/pricing/)・[Worker の利用制限](https://developers.cloudflare.com/workers/platform/limits/)を確認してください。
 
 WranglerはCloudflareの設定・デプロイ用コマンドです。`worker/wrangler.toml` を読み、Workerの作成・更新と、R2バケットへの接続設定を行います。コードを画面に貼り付ける必要はありません。
 
@@ -144,7 +148,7 @@ WranglerはCloudflareの設定・デプロイ用コマンドです。`worker/wra
 
 コマンド操作が難しければ、Museに「`worker/wrangler.toml` を使った設定を手伝って」と依頼できます。Cloudflareのログイン許可と秘密値の入力は、本人が認証画面・安全な入力欄で行ってください。
 
-参考: [Wrangler設定](https://developers.cloudflare.com/workers/wrangler/configuration/)、[R2バケット作成](https://developers.cloudflare.com/r2/buckets/create-buckets/)。この手順で設定するのはCloudflare側だけです。GASとiOSアプリの設定は続くステップで行います。
+参考: [workers.dev の説明](https://developers.cloudflare.com/workers/configuration/routing/workers-dev/)、[Wrangler設定](https://developers.cloudflare.com/workers/wrangler/configuration/)、[R2バケット作成](https://developers.cloudflare.com/r2/buckets/create-buckets/)。この手順で設定するのはCloudflare側だけです。GASとiOSアプリの設定は続くステップで行います。
 
 ### 最後に確認
 
