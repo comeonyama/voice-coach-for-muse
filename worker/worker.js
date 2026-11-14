@@ -3,10 +3,12 @@
 // 配信基盤の Cloudflare 版。読み取りと書き込みをトークン認証で保護し、
 // 実データは R2 に置く。
 //
+//   GET  /live-session.json -> R2 の最新ライブデータ (認証必須)
 //   GET  /queue.json        -> R2 の "queue.json" をそのまま返す (no-store)
 //   GET  /history.json      -> R2 の "history.json" をそのまま返す (no-store)
 //   GET  /session.json      -> R2 の "session.json" (要 X-Upload-Token、非公開)
 //   GET  /audio/<name>.mp3  -> R2 の "audio/<name>.mp3" を返す (no-store)
+//   POST /upload?op=live                  (要 X-Upload-Token)
 //   POST /upload?op=audio&name=<id>.mp3   (要 X-Upload-Token)
 //   POST /upload?op=queue                 (要 X-Upload-Token)
 //   POST /upload?op=history               (要 X-Upload-Token)
@@ -75,7 +77,7 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
 
-    if (request.method === "GET" && (url.pathname === "/start-status.json" || url.pathname === "/queue.json" ||
+    if (request.method === "GET" && (url.pathname === "/start-status.json" || url.pathname === "/live-session.json" || url.pathname === "/queue.json" ||
         url.pathname === "/history.json" || url.pathname.startsWith("/audio/")) && !canRead(request, env)) {
       return json(401, { ok: false, error: "unauthorized" });
     }
@@ -85,6 +87,12 @@ export default {
       if (!obj) return json(404, { ok: false, error: "no start status" });
       const value = JSON.parse(await obj.text());
       return json(200, { start_id: value.start_id, state: value.state, at: value.at });
+    }
+
+    if (request.method === "GET" && url.pathname === "/live-session.json") {
+      const obj = await env.QUEUE_BUCKET.get("live-session.json");
+      if (obj === null) return json(404, { ok: false, error: "no live session" });
+      return new Response(obj.body, { headers: { "Content-Type": "application/json", "Cache-Control": "no-store" } });
     }
 
     // ---- authenticated reads ------------------------------------------
@@ -149,6 +157,21 @@ export default {
         return json(401, { ok: false, error: "unauthorized" });
       }
       const op = url.searchParams.get("op");
+
+      if (op === "live") {
+        let value;
+        try { value = await request.json(); }
+        catch { return json(400, { ok: false, error: "invalid json" }); }
+        if (!value || typeof value !== "object" || Array.isArray(value) ||
+            !["version", "sessionId", "sentAt", "latest"].every(key => Object.hasOwn(value, key))) {
+          return json(400, { ok: false, error: "invalid live shape" });
+        }
+        value.storedAt = new Date().toISOString();
+        await env.QUEUE_BUCKET.put("live-session.json", JSON.stringify(value), {
+          httpMetadata: { contentType: "application/json" },
+        });
+        return json(200, { ok: true });
+      }
 
       if (op === "audio") {
         const name = url.searchParams.get("name") || "";
