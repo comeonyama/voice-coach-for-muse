@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<iq:manifest xmlns:iq="http://www.garmin.com/xml/connectiq" version="3">
+  <iq:application id="7ac29246e7244d45a14541d19c543680" type="datafield" name="@Strings.AppName" launcherIcon="@Drawables.LauncherIcon" entry="VcmApp" minApiLevel="6.0.0">
+    <iq:products><iq:product id="fenix843mm"/><iq:product id="fenix847mm"/></iq:products>
+    <iq:permissions><iq:uses-permission id="Communications"/></iq:permissions>
+    <iq:languages><iq:language>eng</iq:language></iq:languages>
+    <iq:barrels/>
+  </iq:application>
+</iq:manifest>
