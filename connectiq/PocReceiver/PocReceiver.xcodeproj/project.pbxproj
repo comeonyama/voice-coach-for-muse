@@ -7,11 +7,15 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+        B00000000000000000000001 /* AVFoundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = B00000000000000000000003 /* AVFoundation.framework */; };
+        B00000000000000000000002 /* Security.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = B00000000000000000000004 /* Security.framework */; };
 		A00000000000000000000001 /* main.m in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000002 /* main.m */; };
 		A00000000000000000000003 /* ConnectIQ in Frameworks */ = {isa = PBXBuildFile; productRef = A00000000000000000000004 /* ConnectIQ */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+        B00000000000000000000003 /* AVFoundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = AVFoundation.framework; path = System/Library/Frameworks/AVFoundation.framework; sourceTree = SDKROOT; };
+        B00000000000000000000004 /* Security.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Security.framework; path = System/Library/Frameworks/Security.framework; sourceTree = SDKROOT; };
 		A00000000000000000000002 /* main.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = main.m; sourceTree = "<group>"; };
 		A00000000000000000000005 /* PocReceiver.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = PocReceiver.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		A00000000000000000000006 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
@@ -23,6 +27,8 @@
 			buildActionMask = 2147483647;
 			files = (
 				A00000000000000000000003 /* ConnectIQ in Frameworks */,
+                B00000000000000000000001 /* AVFoundation.framework in Frameworks */,
+                B00000000000000000000002 /* Security.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -34,6 +40,8 @@
 			children = (
 				A00000000000000000000002 /* main.m */,
 				A00000000000000000000006 /* Info.plist */,
+                B00000000000000000000003 /* AVFoundation.framework */,
+                B00000000000000000000004 /* Security.framework */,
 				A00000000000000000000008 /* Products */,
 			);
 			sourceTree = "<group>";
